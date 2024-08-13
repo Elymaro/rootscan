@@ -124,10 +124,17 @@ Available functions:
 ```
 
 ### Exemple HTML report
+
 ![image](https://github.com/Elymaro/rootscan/blob/main/assets/nmap_html.png)
 
-## Credits
+## Contributors
+
+  - [O.B. E](https://www.linkedin.com/in/omar-badis-elaffifi/)
+  - [SAFEIT CONSULTING](https://www.linkedin.com/company/safeit-consulting/)
+
+## Tools
 
   - [fortra](https://github.com/fortra) - impacket
   - [Pennyw0rth](https://github.com/Pennyw0rth) NetExec
   - [ropnop](https://github.com/ropnop) - Kerbrute
+  - [blacklanternsecurity](https://github.com/blacklanternsecurity/MANSPIDER) - Manspider

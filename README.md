@@ -26,6 +26,7 @@ cd rootscan ; chmod +x rootscan.sh
 ipcalc
 netexec
 impacket
+manspider
 xsltproc (convert result_nmap.xml to result_nmap.html)
 PRET (printer discovery)
 nmap
@@ -33,6 +34,10 @@ nmap
 #### Installation of some dependencies
 ```
 apt update && apt install ipcalc xsltproc netexec nmap -y
+sudo apt install tesseract-ocr
+sudo apt install antiword
+pip install pipx
+pipx install git+https://github.com/blacklanternsecurity/MANSPIDER
 ```
 
 ### Usage :

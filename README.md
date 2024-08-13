@@ -23,6 +23,7 @@ manspider
 xsltproc (convert result_nmap.xml to result_nmap.html)
 PRET (printer discovery)
 nmap
+kerbrute
 ```
 
 ### Installation

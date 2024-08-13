@@ -31,13 +31,9 @@ git clone https://github.com/Elymaro/rootscan.git
 cd rootscan ; chmod +x rootscan.sh
 ```
 
-### Installation of some dependencies
+### Installation dependencies
 ```
-apt update && apt install ipcalc xsltproc netexec nmap -y
-sudo apt install tesseract-ocr
-sudo apt install antiword
-pip install pipx
-pipx install git+https://github.com/blacklanternsecurity/MANSPIDER
+chmod +x install.sh && ./install.sh
 ```
 
 ### Usage :

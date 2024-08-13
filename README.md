@@ -30,7 +30,14 @@ xsltproc (convert result_nmap.xml to result_nmap.html)
 PRET (printer discovery)
 nmap
 ```
+#### Installation of some dependencies
+```
+apt update && apt install ipcalc xsltproc netexec nmap -y
+```
+
 ### Usage :
+
+For the first start of a projet, you must use option **-f** or at least **-e nmap_fast**
 
 Full enumeration with "b.robinson" acount on the 192.168.1.0/26 network
 ```

@@ -42,7 +42,7 @@ pipx install git+https://github.com/blacklanternsecurity/MANSPIDER
 
 ### Usage :
 
-For the first start of a projet, you must use option **-f** or at least **-e nmap_fast**
+For the first start of a projet, you must use option **-f** or at least **-s nmap_fast**
 
 Full enumeration with "b.robinson" acount on the 192.168.1.0/26 network
 ```

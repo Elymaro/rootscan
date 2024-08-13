@@ -14,13 +14,6 @@ Key features:
 ![image](https://github.com/Elymaro/rootscan/blob/main/assets/elymaro.lab.png)
 
 Some elements can be modified on the targets (only in the SMB function). If this is the case, orange information will be displayed and the recovery commands will be written to a modifs.txt file. The -r option will be used to execute all of them in order to clean up the actions performed.
-
-### Installation
-```
-git clone https://github.com/Elymaro/rootscan.git
-cd rootscan ; chmod +x rootscan.sh
-```
-
 ### Dependencies
 ```
 ipcalc
@@ -31,7 +24,14 @@ xsltproc (convert result_nmap.xml to result_nmap.html)
 PRET (printer discovery)
 nmap
 ```
-#### Installation of some dependencies
+
+### Installation
+```
+git clone https://github.com/Elymaro/rootscan.git
+cd rootscan ; chmod +x rootscan.sh
+```
+
+### Installation of some dependencies
 ```
 apt update && apt install ipcalc xsltproc netexec nmap -y
 sudo apt install tesseract-ocr

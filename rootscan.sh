@@ -1249,7 +1249,7 @@ nmap_full () {
 	fi
 	
 	#Deleting useless files
-	if [ -n "$(ls /root/FINAL_Internal/scan_nmap/*.gnmap 2>/dev/null)" ]; then
+	if [ -n "$(ls ${DIR}/scan_nmap/*.gnmap 2>/dev/null)" ]; then
 		rm $DIR/scan_nmap/*.gnmap
 	fi
 	
@@ -1257,11 +1257,9 @@ nmap_full () {
 	xsltproc $DIR/scan_nmap/scan_Full_UDP.xml -o /tmp/scan_Full_UDP.html
 	#Suppression des filtered|opened
 	awk 'BEGIN { RS="</tr>" } /open\|filtered/ { next } { printf "%s", $0 "</tr>" }' /tmp/scan_Full_UDP.html > /tmp/scan_Full_UDP_open.html
-	rm /tmp/scan_Full_UDP.html
-	mkdir /home/kali/$ProjectName
 	
-	log "${SPACE}File TCP in HTML format available to -> /home/kali/$ProjectName/scan_Full_TCP.html"
-	log "${SPACE}File UDP in HTML format available to -> /home/kali/$ProjectName/scan_Full_UDP_open.html"
+	log "${SPACE}File TCP in HTML format available to -> /tmp/scan_Full_TCP.html"
+	log "${SPACE}File UDP in HTML format available to -> /tmp/scan_Full_UDP_open.html"
 }
 
 ########################### TREE COMMAND ##################################

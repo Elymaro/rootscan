@@ -33,3 +33,16 @@ fi
 if ! which xsltproc >/dev/null 2>&1; then
  apt install xsltproc -y
 fi
+
+if ! which kerbrute >/dev/null 2>&1; then
+ if ! dpkg -l | grep -q "^ii  golang-go "; then
+   apt install golang-go -y
+ fi 
+ git clone https://github.com/ropnop/kerbrute
+ cd kerbrute
+ make linux
+ cd dist
+ cp kerbrute_linux_amd64 /usr/sbin/kerbrute
+ cd ../..
+ rm -rf kerbrute
+fi

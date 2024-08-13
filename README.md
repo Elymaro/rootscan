@@ -97,7 +97,7 @@ Options:
   -h  Display help
 
 Available functions:
-  - nmap_fast    : Ports scan, Service versions scan
+  - nmap_fast    : Ports scan, Service versions scan (need to be done at least 1 time at the begin of a project)
   - relay        : Responder + NTLMRelayx
   - manspider    : Search sensitive elements (password, username, .. etc) on SMB Shares
   - vulns        : ms17-010, nopac, zerologon, MSOL creds, GPP_autologin, GPP_password, ...
@@ -115,11 +115,12 @@ Available functions:
   - ipmi         : ipmi enumeration
   - mssql        : MSSQL authentication
   - smb          : anonymous auth., guest auth., shares, users, lsa, dpapi, rdp session ..
-  - asp          : PrintersScan
-  - users        : Try ASRepRoasting Attack
-  - krb          : Get-ADUsers
-  - web          : Try Kerberoasting Attack
-  - nmap_full    : Try to identify web services
+  - prn          : PrintersScan
+  - asp          : Try ASRepRoasting Attack
+  - users        : Get-ADUsers
+  - krb          : Try Kerberoasting Attack
+  - web          : Try to identify web services
+  - nmap_full    : Deep nmap scan
 ```
 
 ### Exemple HTML report

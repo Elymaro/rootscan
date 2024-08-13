@@ -1,12 +1,9 @@
 #!/bin/bash
 
-######## DEPENDENCIES ######
-#- ipcalc
-#- netexec
-#- impacket
-#- xsltproc
-#- PRET (printer discovery)
-#- nmap
+#################################################################
+#####  Developped by Aurélien BOURDOIS                      #####
+#####  https://www.linkedin.com/in/aurelien-bourdois/       #####
+#################################################################
 
 # #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # ###################			FUNCTION CALLS 		#########################

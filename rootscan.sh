@@ -166,7 +166,7 @@ nmap_fast () {
 		blue_log "Import 'nmap binaries' on the victim to do a nmap from the linux target (too slow through proxychains)"
 		blue_log "nmap -sV -Pn -T4 --open -oA scan_Fast_TCP $rangeIP"
 		blue_log "nmap -Pn -sU --open --top 25 -oA scan_Full_UDP $rangeIP"
-		blue_log "Puis exfiltrer les rapports vers le repertoire '$DIR/scan_nmap/' de la machine attaquante"
+		blue_log "Then exfiltrate nmap reports to '$DIR/scan_nmap/' on the attacker's machine"
 		blue_log "Then mount the proxychains"
 		log "Press Entrer when ready ..."
 		read
@@ -1233,10 +1233,10 @@ nmap_full () {
 			cp $DIR/scan_nmap/scan_Fast_TCP.nmap $DIR/scan_nmap/scan_Full_TCP.nmap
 			cp $DIR/scan_nmap/scan_Fast_TCP.xml $DIR/scan_nmap/scan_Full_TCP.xml
 		else
-			blue_log "Effectuer un nmap complet du réseau distant pour terminer :"
+			blue_log "Do a more in depth nmap on the distant internal network to continue :"
 			blue_log "nmap -Pn -A -sT -sCV $rangeIP -oA scan_Full_TCP -p- --open"
-			blue_log "Puis exfiltrer les rapport vers le repertoire '$DIR/scan_nmap/' de la machine attaquante"
-			log "Appuyer dur Entrée pour continuer"
+			blue_log "Then exfiltrate nmap reports to '$DIR/scan_nmap/' on the attacker's machine"
+			log "Press Entrer when ready ..."
 			read
 			nmap_full
 		fi

@@ -138,18 +138,32 @@ check_live_hosts() {
 	MY_IP=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -d'/' -f1)
 	MY_IP_WITH_MASK=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -f1)
 	# Calculer l'adresse réseau pour arp-scan
-	NETWORK_LAN=$(ipcalc -n -b $MY_IP_WITH_MASK | grep -oP 'Network:\s+\K\S+')
+	NETWORK_LAN=$(ipcalc -n -b $MY_IP_WITH_MASK | grep "Network:" | awk '{print $2}')
+	NETWORK_LAN_BROADCAST=$(echo "$network_info" | grep "Broadcast:" | awk '{print $2}')
 	
-	#If attack range is exactly same that our actual network card
-	if [ "$rangeIP" == "$NETWORK_LAN" ]; then
-		$proxychains arp-scan -I $INTERFACE -g $NETWORK_LAN -q | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v $MY_IP > $DIR/tmp_hosts.txt 2>&1
-		log "list hosts :"
-		log "cat $DIR/tmp_hosts.txt"
+	TARGET_LAN=$(ipcalc -n -b $rangeIP  | grep "Network:" | awk '{print $2}')
+	TARGET_LAN_BROADCAST=$(ipcalc -n -b $rangeIP | grep "Broadcast:" | awk '{print $2}')
+	
+	# Convert IP addresses to integers for comparison
+	ip_to_int() {
+		local a b c d
+		IFS=. read -r a b c d <<< "$1"
+		echo $((a * 256**3 + b * 256**2 + c * 256 + d))
+	}
+	
+	network_start=$(ip_to_int "$NETWORK_LAN")
+	network_end=$(ip_to_int "$NETWORK_LAN_BROADCAST")
+	target_start=$(ip_to_int "$TARGET_LAN")
+	target_end=$(ip_to_int "$TARGET_LAN_BROADCAST")
+	
+	#If attack range is into the selected network interface
+	if [[ $network_start -ge $supernet_start && $network_end -le $supernet_end ]]; then
+		$proxychains arp-scan -I $INTERFACE -g $rangeIP -q | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v $MY_IP > $DIR/tmp_hosts.txt 2>&1
 		#S'assurer que les excluded hosts ne sont pas inclu dans hosts.txt
 		cat $DIR/tmp_hosts.txt | grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' > $DIR/hosts.txt
 		rm $DIR/tmp_hosts.txt
 		NMAP_HOSTS="-iL $DIR/hosts.txt"
-		log "${SPACE}[!] Alive targets file created : $DIR/hosts.txt"
+		log "[!] Alive targets file created : $DIR/hosts.txt"
 	else
 		NMAP_HOSTS="$rangeIP"
 	fi
@@ -175,6 +189,7 @@ nmap_fast () {
 		#Si pas proxychains, sS pour TCP
 		#ports=$(nmap -p- --min-rate=1000 -T4 $target | grep ^[0-9] | cut -d '/' -f 1 | tr '\n' ',' | sed s/,$//); echo "nmap -p $ports -sT -sV -T4 -R $target"; nmap -p $ports -sT -sV -T4 -R $target
 		nmap -Pn $NMAP_HOSTS -sS -sV -T4 -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1
+		echo "nmap -Pn $NMAP_HOSTS -sS -sV -T4 -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1"
 		#log "${SPACE}[!] Nmap TCP report : ${DIR}/scan_nmap/scan_Fast_TCP.nmap"
 		xsltproc $DIR/scan_nmap/scan_Fast_TCP.xml -o /tmp/scan_Fast_TCP.html
 		log "${SPACE}[!] Nmap TCP report in HTML format : /tmp/scan_Fast_TCP.html"

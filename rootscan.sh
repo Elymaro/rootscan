@@ -1273,7 +1273,7 @@ say_bye () {
 
 # Déclaration des fonctions
 declare -a functions=(nmap_fast relay manspider vulns ftp ssh winrm rdp smtp nfs vnc zt printers snmp ldap ipmi mssql smb asp users krb web nmap_full)
-declare -a functions_long_names=("Ports scan, Service versions scan" "Responder + NTLMRelayx" "Search sensitive elements (password, username, .. etc) on SMB Shares" "ms17-010, nopac, zerologon, MSOL creds, GPP_autologin, GPP_password, ..." "FTP enumeration" "SSH enumeration" "NFS enumeration" "WinRm enumeration" "RDP enumeration" "NFS enumeration" "VNC enumeration" "Zone Transfer DNS" "Looking for printers" "Looking for SNMP public communities" "Anonymous LDAP" "ipmi enumeration" "MSSQL authentication" "anonymous auth., guest auth., shares, users, lsa, dpapi, rdp session .." PrintersScan "Try ASRepRoasting Attack" "Get-ADUsers" "Try Kerberoasting Attack" "Try to identify web services" "Deep Nmap")
+declare -a functions_long_names=("Ports scan, Service versions scan (need to be done at least 1 time at the begin of a project)" "Responder + NTLMRelayx" "Search sensitive elements (password, username, .. etc) on SMB Shares" "ms17-010, nopac, zerologon, MSOL creds, GPP_autologin, GPP_password, ..." "FTP enumeration" "SSH enumeration" "NFS enumeration" "WinRm enumeration" "RDP enumeration" "NFS enumeration" "VNC enumeration" "Zone Transfer DNS" "Looking for printers" "Looking for SNMP public communities" "Anonymous LDAP" "IPMI enumeration" "MSSQL authentication" "anonymous auth., guest auth., shares, users, lsa, dpapi, rdp session .." "Try ASRepRoasting Attack" "Get-ADUsers" "Try Kerberoasting Attack" "Try to identify web services" "Deep Nmap")
 
 ###################		 HELP 	##############################
 Help() {
@@ -1281,17 +1281,17 @@ Help() {
     echo
     echo "Options:"
     echo "  -o  Project name (output directory)"
-	echo "  -i  Network interface"
-	echo "  -t  IP range (e.g., 192.168.1.17/32 or 192.168.1.128/27)"
+    echo "  -i  Network interface"
+    echo "  -t  IP range (e.g., 192.168.1.17/32 or 192.168.1.128/27)"
     echo "  -u  Username (optional)"
     echo "  -p  Password (optional, either Password or NT_Hash must be provided, can be empty)"
     echo "  -H  NTLM Hash (optional, either Password or NT_Hash must be provided, can be empty)"
     echo "  -f  Execute all functions"
-	echo "  -e  Execute all functions, but exclude specific functions (-e rdp,winrm)"
+    echo "  -e  Execute all functions, but exclude specific functions (-e rdp,winrm)"
     echo "  -s  Select specific functions (-s rdp,winrm)"
     echo "  -r  Restore modifications"
     echo "  -h  Display help"
-	echo
+    echo
     echo "Available functions:"
     for i in "${!functions[@]}"; do
         printf "  - %-12s : %s\n" "${functions[$i]}" "${functions_long_names[$i]}"
@@ -1302,13 +1302,13 @@ Help() {
 while getopts "o:i:u:p:H:t:e:s:fhr" option; do
     case $option in
         o) ProjectName=$OPTARG;;
-		i) INTERFACE=$OPTARG;;
+        i) INTERFACE=$OPTARG;;
         u) Username=$OPTARG;;
         p) Password=$OPTARG;;
         H) NT_Hash=$OPTARG;;
         t) rangeIP=$OPTARG;;
         f) execute_all=true;;
-		e) excluded_funcs=$OPTARG;;
+        e) excluded_funcs=$OPTARG;;
         s) selected_funcs=$OPTARG;;
         r) restore=true;;
         h) Help;;

@@ -88,19 +88,19 @@ Available functions:
   - vulns        : ms17-010, nopac, zerologon, MSOL creds, GPP_autologin, GPP_password, ...
   - ftp          : FTP enumeration
   - ssh          : SSH enumeration
-  - winrm        : NFS enumeration
-  - rdp          : WinRm enumeration
-  - smtp         : RDP enumeration
+  - winrm        : WinRM enumeration
+  - rdp          : RDP enumeration
+  - smtp         : SMTP enumeration
   - nfs          : NFS enumeration
   - vnc          : VNC enumeration
   - zt           : Zone Transfer DNS
   - printers     : Looking for printers
   - snmp         : Looking for SNMP public communities
   - ldap         : Anonymous LDAP
-  - ipmi         : ipmi enumeration
+  - ipmi         : IPMI enumeration
   - mssql        : MSSQL authentication
   - smb          : anonymous auth., guest auth., shares, users, lsa, dpapi, rdp session ..
-  - prn          : PrintersScan
+  - prn          : Printers scan
   - asp          : Try ASRepRoasting Attack
   - users        : Get-ADUsers
   - krb          : Try Kerberoasting Attack

@@ -686,24 +686,25 @@ printers () {
 # ########################### SNMP ###############################
 snmp () {
 	if [[ -e "$DIR_PORTS/161.txt" ]] || [[ -e "$DIR_PORTS/162.txt" ]] || [[ -e "$DIR_PORTS/1061.txt" ]] || [[ -e "$DIR_PORTS/1062.txt" ]]; then
-		log "[🔍] Check devices using SNMP protocol on public community"
+		log "[??] Check devices using SNMP protocol on public community"
 		#merge of files
 		for fichier in $DIR_PORTS/161.txt $DIR_PORTS/162.txt $DIR_PORTS/1061.txt $DIR_PORTS/1062.txt; do
 			cat "$fichier" /dev/null 2>&1 >> "$DIR_PORTS/snmp.txt" || echo "Le fichier $fichier est absent."
 		done
-		#Remove duplicates ip
-		sort -u ${DIR_PORTS}/snmp.txt -o ${DIR_PORTS}/snmp.txt
+  		sort -u "$DIR_PORTS/snmp.txt" -o "$DIR_PORTS/snmp.txt"
+  
+		onesixtyone -c /usr/share/seclists/Discovery/SNMP/common-snmp-community-strings-onesixtyone.txt -i "$DIR_PORTS/snmp.txt" -o "$DIR/communities.txt" -w 100 -q
+  
 		for ip in ${DIR_PORTS}/snmp.txt; do
-			hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-			# Affichage des DC
-			result_v1=""
-			result_v1=$(snmpwalk -v 1 -c public $ip)
+    			while read -r line; do
+    				ip=$(echo "$line" | awk '{print $1}')
+				hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+    				COMMUNITY=$(echo "$line" | awk -F'[][]' '{print $2}')
+				green_log "${SPACE}[💀] SNMP v1 in ${COMMUNITY} community found on $ip ($hostname) : $DIR/communities.txt"
+			done < $DIR/communities.txt
+
 			result_v2c=""
 			result_v2c=$(snmpwalk -v 2c -c public $ip -t $SNMP_TIMEOUT)
-			if [[ -n "$result_v1" ]]; then
-				green_log "${SPACE}[💀] SNMP v1 in PUBLIC community found on $ip ($hostname) : ${DIR_VULNS}/SNMP-Public_v1.txt"
-				echo "$result_v1" >> ${DIR_VULNS}/SNMP-Public_v1.txt
-			fi
 			if [[ -n "$result_v2c" ]]; then
 				green_log "${SPACE}[💀] SNMP v2c in PUBLIC community found on $ip ($hostname) : ${DIR_VULNS}/SNMP-Public_v2c.txt"
 				echo "$result_v2c" >> ${DIR_VULNS}/SNMP-Public_v2c.txt

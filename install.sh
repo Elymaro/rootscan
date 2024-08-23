@@ -67,3 +67,7 @@ fi
 if ! which onesixtyone >/dev/null 2>&1; then
    apt install onesixtyone -y
 fi
+
+if ! which seclists >/dev/null 2>&1; then
+   apt install seclists -y
+fi

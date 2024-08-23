@@ -59,5 +59,11 @@ if ! which snmpwalk >/dev/null 2>&1; then
    apt install snmp-mibs-downloader -y
 fi
 #Installation MIB SNMP :
-download-mibs
-sed -i '/^mibs :/ s/^/# /' /etc/snmp/snmp.conf
+if ! which snmpwalk >/dev/null 2>&1; then
+   apt install download-mibs -y
+   sed -i '/^mibs :/ s/^/# /' /etc/snmp/snmp.conf
+fi
+
+if ! which onesixtyone >/dev/null 2>&1; then
+   apt install onesixtyone -y
+fi

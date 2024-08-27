@@ -1,5 +1,7 @@
 #!/bin/bash
- 
+
+apt update
+
 if ! which ipcalc >/dev/null 2>&1; then
    apt install ipcalc -y
 fi

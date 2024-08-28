@@ -22,7 +22,7 @@ fi
 
 if ! which manspider >/dev/null 2>&1; then
    apt install python3-venv -y
-   pip install pipx
+   pip install pipx -y
    pipx install git+https://github.com/blacklanternsecurity/MANSPIDER
    pipx ensurepath
    # for images (png, jpeg)

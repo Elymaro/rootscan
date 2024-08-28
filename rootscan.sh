@@ -198,7 +198,6 @@ nmap_fast () {
 		#Si pas proxychains, sS pour TCP
 		#ports=$(nmap -p- --min-rate=1000 -T4 $target | grep ^[0-9] | cut -d '/' -f 1 | tr '\n' ',' | sed s/,$//); echo "nmap -p $ports -sT -sV -T4 -R $target"; nmap -p $ports -sT -sV -T4 -R $target
 		nmap -Pn $NMAP_HOSTS -sS -sV -T4 -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1
-		echo "nmap -Pn $NMAP_HOSTS -sS -sV -T4 -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1"
 		#log "${SPACE}[!] Nmap TCP report : ${DIR}/scan_nmap/scan_Fast_TCP.nmap"
 		xsltproc $DIR/scan_nmap/scan_Fast_TCP.xml -o /tmp/scan_Fast_TCP.html
 		log "${SPACE}[!] Nmap TCP report in HTML format : /tmp/scan_Fast_TCP.html"
@@ -1389,13 +1388,11 @@ fi
 if [[ -n "$excluded_funcs" ]]; then
     starter
     IFS=',' read -ra excluded_funcs_arr <<< "$excluded_funcs"
-    printf "%s\n" "${functions[@]}" > .functions.tmp
-    printf "%s\n" "${excluded_funcs_arr[@]}" > .excluded_funcs.tmp
-    filtered=$(comm -3 .functions.tmp .excluded_funcs.tmp)
-    for f in $filtered;do
-        $f
+    for f in "${functions[@]}"; do
+        if [[ ! " ${excluded_funcs_arr[@]} " =~ " ${f} " ]]; then
+            $f
+        fi
     done
-    rm -rf .functions.tmp .excluded_funcs.tmp
     say_bye
 fi
 

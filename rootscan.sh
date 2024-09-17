@@ -199,8 +199,6 @@ nmap_fast () {
 		#ports=$(nmap -p- --min-rate=1000 -T4 $target | grep ^[0-9] | cut -d '/' -f 1 | tr '\n' ',' | sed s/,$//); echo "nmap -p $ports -sT -sV -T4 -R $target"; nmap -p $ports -sT -sV -T4 -R $target
 		nmap -Pn $NMAP_HOSTS -sS -sV -T4 -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1
 		#log "${SPACE}[!] Nmap TCP report : ${DIR}/scan_nmap/scan_Fast_TCP.nmap"
-		xsltproc $DIR/scan_nmap/scan_Fast_TCP.xml -o /tmp/scan_Fast_TCP.html
-		log "${SPACE}[!] Nmap TCP report in HTML format : /tmp/scan_Fast_TCP.html"
 		log "${SPACE}[📂] UDP ..."
 		#UDP
 		nmap -Pn -sU $NMAP_HOSTS -R -oA $DIR/scan_nmap/scan_Full_UDP --open --top 25 -T4 --exclude $excluded_hosts >/dev/null 2>&1
@@ -211,13 +209,19 @@ nmap_fast () {
 	#log "${SPACE}[!] Nmap UDP report : ${DIR}/scan_nmap/scan_Full_UDP.nmap"
 	
 	#Convert to html
+	sed -i 's/href="nmap\.xsl/href="file:\/\/\/usr\/bin\/\.\.\/share\/nmap\/nmap\.xsl/g' $DIR/scan_nmap/scan_Fast_TCP.xml
+	xsltproc $DIR/scan_nmap/scan_Fast_TCP.xml -o /tmp/scan_Fast_TCP.html
+	log "${SPACE}[!] Nmap TCP report in HTML format : /tmp/scan_Fast_TCP.html"
+	
 	cat ${DIR}/scan_nmap/scan_Full_UDP.nmap | grep -v "open|filtered" > ${DIR}/scan_nmap/scan_Full_UDP_open.nmap
-
+	sed -i 's/href="nmap\.xsl/href="file:\/\/\/usr\/bin\/\.\.\/share\/nmap\/nmap\.xsl/g' $DIR/scan_nmap/scan_Full_UDP.xml
+	echo "xsltproc $DIR/scan_nmap/scan_Full_UDP.xml -o /tmp/scan_Full_UDP.html"
 	xsltproc $DIR/scan_nmap/scan_Full_UDP.xml -o /tmp/scan_Full_UDP.html
 	#Suppression des filtered|opened
+	echo "echo2"
 	awk 'BEGIN { RS="</tr>" } /open\|filtered/ { next } { printf "%s", $0 "</tr>" }' /tmp/scan_Full_UDP.html > /tmp/scan_Full_UDP_open.html
 	log "${SPACE}[!] Nmap UDP report in HTML format : /tmp/scan_Full_UDP.html"
-	
+	echo "echo3"
 	#Extracting IP from the 2 reports
 	grep -i 'Nmap scan report for' "${DIR}/scan_nmap/scan_Fast_TCP.nmap" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' >> ${DIR}/hosts.txt
 	grep -i 'Nmap scan report for' "${DIR}/scan_nmap/scan_Full_UDP.nmap" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' >> ${DIR}/hosts.txt
@@ -374,7 +378,7 @@ manspider () {
 	if [ -e "$DIR_PORTS/445.txt" ]; then
 		max_size_files_checked="15M"
 		threads="100"
-		wordlist="confiden classified bastion '\bcode*.' creds credential wifi hash ntlm '\bidentifiant*.' compte utilisateur '\buser*.' '\b\$.*pass*.' '\root*.' '\b\$.*admin*.' '\badmin*.' account login '\bcpassword*.' '\bpassw*.' cred '\bpasse*.' '\b\$.*pass*.' 'mot de passe' cisco pfsense pfx ppk rsa pem ssh rsa '\bcard*.' '\bcarte*.' '\bidentite*.' '\bidentité*.' '\bpasseport*.'"
+		wordlist="confiden classified bastion '\bcode\w*' creds credential wifi hash ntlm '\bidentifiant\w*' compte utilisateur '\buser\w*' '\b\$.*pass\w*' '\root\w*' '\b\$.*admin\w*' '\badmin\w*' account login 'cpassword\w*' 'pass\w*' cred '\b\$.*pass\w*' cisco pfsense pfx ppk rsa pem ssh rsa '\bcard\w*' '\bcarte\w*' '\bidentite\w*' '\bidentité\w*' '\bpasseport\w*'"
 		exclusions="--exclude-dirnames AppData --exclude-extensions DAT LOG2 LOG1 lnk msi"
 		request_manspider="$proxychains manspider -n -s $max_size_files_checked -t $threads -c $wordlist $exclusions"
 		log "[🔍] Launching manspider"
@@ -866,8 +870,8 @@ smb () {
 			log "${SPACE}[📂] Check for $ip ($hostname) ..."
 
 			#Anonymous / null session is allowed ?
-			$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session 2>/dev/null
-			if grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
+			$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 1000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session 2>/dev/null
+			if grep -aq 'SidTypeUser' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
 				green_log "${SPACE}[💀] $ip allow null session (anonymous)"
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 10000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute 2>/dev/null
 				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -i 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
@@ -881,6 +885,11 @@ smb () {
 				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute | grep -av '\[.\]' | awk -F'\\' '{print $2}' | wc -l)
 				if [[ "$check_smb" -gt 0 ]]; then
 					green_log "${SPACE}[💀] New users found (check descriptions can be interesting) -> ${DIR}/users_with_descriptions.txt"
+				fi
+				$proxychains timeout 7 smbmap -H $host --no-banner > ${DIR_VULNS}/smb/smbmap_${ip}_null_session_shares 2>/dev/null
+				if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
+					green_log "${SPACE}[💀] Shares available are logged there -> ${DIR_VULNS}/smb/smbmap_${ip}_null_session_shares"
+					blue_log "${SPACE} [+] smbmap -H ${ip} -r --depth 3 --exclude IPC$"
 				fi
 			fi
 			# Guest session allowed ?
@@ -899,6 +908,11 @@ smb () {
 				if [[ "$check_smb" -gt 0 ]]; then
 					green_log "${SPACE}[💀] New users found (check descriptions can be interesting) -> ${DIR}/users_with_descriptions.txt"
 				fi
+				$proxychains timeout 7 smbmap -H $host -p 'GuestUser' -p '' --no-banner > ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares 2>/dev/null
+				if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares"; then
+					green_log "${SPACE}[💀] Shares available are logged there -> ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares"
+					blue_log "${SPACE} [+] smbmap -H ${ip} -p 'GuestUser' -p '' -r --depth 3 --exclude IPC$"
+				fi
 			fi
 			# Can i connect with input user ?
 			if [[ "$Username" != "anonymous" ]]; then
@@ -916,7 +930,7 @@ smb () {
 				fi
 			fi
 			#Can we connect to at least one share ?
-			if grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_basic || grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest || grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
+			if grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_basic || grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest || grep -aq 'SidTypeUser' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
 				if [[ "$Username" != "anonymous" ]]; then
 					green_log "${SPACE}[💀] $Username is a valid username"
 				fi

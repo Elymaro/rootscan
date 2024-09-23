@@ -558,7 +558,7 @@ winrm () {
 				if grep -aq '(Pwn3d!)' ${DIR_VULNS}/winrm_${ip}; then
 					red_log "${SPACE}${SPACE}[💀] $Username have admin rights !"
 				fi
-				blue_log "${SPACE}${SPACE} [+] $proxychains evil-winrm -i ${host} -u "$Username" $cme_creds"
+				blue_log "${SPACE}${SPACE} [+] $proxychains evil-winrm -i ${ip} -u "$Username" $cme_creds"
 			else
 				#echo ${DIR_VULNS}/winrm_${ip}
 				#cat ${DIR_VULNS}/winrm_${ip}
@@ -786,7 +786,6 @@ ldap () {
 				LDAP_domain_old+=("$LDAP_domain")
 				
 				#Extraction des utilisateurs et groupes (CN) : Peu précis ..
-				echo "$proxychains ldapsearch -H ldap://${ip} -x -w '' -D '' -b $base_ldap"
 				$proxychains ldapsearch -H ldap://${ip} -x -w '' -D '' -b "${base_ldap}" | grep 'dn: CN=' > ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt 2>/dev/null
 				check_ldap=$(cat ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt | wc -l)
 				
@@ -946,7 +945,7 @@ smb () {
 			fi
 			# Can i connect with input user ?
 			if [[ "$Username" != "anonymous" ]]; then
-				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u $Username $cme_creds < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic 2>/dev/null
+				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u $Username $cme_creds < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic_$Username 2>/dev/null
 				if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/smb/cme_${ip}_basic" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/smb/cme_${ip}_basic_$Username"; then
 					#If NTLM is not supported, restart with kerberos
 					if [[ -n "$hostname" ]];then

@@ -413,7 +413,8 @@ manspider () {
 vulns () {
 	log "[🔍] Starting vulnerabilty scans on all devices"
 	if [[ "$Username" != "anonymous" ]];then
-		smb_modules_devices=(coerce_plus ms17-010 zerologon spooler webdav install_elevated gpp_password gpp_autologin enum_av enumdns veeam msol)
+		#smb_modules_devices=(coerce_plus ms17-010 zerologon spooler webdav install_elevated gpp_password gpp_autologin enum_av enumdns veeam msol)
+		smb_modules_devices=(spooler webdav install_elevated gpp_password gpp_autologin enum_av enumdns veeam msol)
 	else
 		smb_modules_devices=""
 	fi

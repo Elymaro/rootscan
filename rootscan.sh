@@ -916,7 +916,7 @@ smb () {
 				if [[ "$check_smb" -gt 0 ]]; then
 					green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
 				fi
-				$proxychains timeout 7 smbmap -H $host --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\." > ${DIR_VULNS}/smb/smbmap_${ip}_null_session_shares 2>/dev/null
+				$proxychains timeout 7 smbmap -H $ip --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\." > ${DIR_VULNS}/smb/smbmap_${ip}_null_session_shares 2>/dev/null
 				if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
 					green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_null_session_shares"
 					blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 --exclude IPC$"
@@ -938,7 +938,7 @@ smb () {
 				if [[ "$check_smb" -gt 0 ]]; then
 					green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
 				fi
-				$proxychains timeout 7 smbmap -H $host -p 'GuestUser' -p '' --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\." > ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares 2>/dev/null
+				$proxychains timeout 7 smbmap -H $ip -p 'GuestUser' -p '' --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\." > ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares 2>/dev/null
 				if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares"; then
 					green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares"
 					blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -p 'GuestUser' -p '' -r --depth 3 --exclude IPC$"
@@ -979,13 +979,13 @@ smb () {
 			if [ "$can_connect" = "1" ]; then
 				#List available shares
 				if [ "$Username" = "anonymous" ]; then
-					$proxychains timeout 7 smbmap -H $host --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\."  > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
+					$proxychains timeout 7 smbmap -H $ip --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\."  > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
 					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
 						green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
 						blue_log "${SPACE}${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '' -p '' --exclude IPC$ --no-banner"
 					fi
 				else
-					$proxychains timeout 7 smbmap -H $host -u "$Username" $cme_creds --no-banner > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
+					$proxychains timeout 7 smbmap -H $ip -u "$Username" $cme_creds --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\." > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
 					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
 						green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
 						if [ -n "$NT_Hash" ]; then

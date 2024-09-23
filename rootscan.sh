@@ -153,7 +153,7 @@ check_live_hosts() {
 	#### CALCUL DES IP ####
 	MY_IP=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -d'/' -f1)
 	MY_IP_WITH_MASK=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -f1)
-	# Calculer l'adresse réseau pour arp-scan
+	# Calculer l'adresse réseau pour arp discovery
 	NETWORK_LAN=$(ipcalc -n -b $MY_IP_WITH_MASK | grep "Network:" | awk '{print $2}')
 	NETWORK_LAN_BROADCAST=$(echo "$network_info" | grep "Broadcast:" | awk '{print $2}')
 	
@@ -174,7 +174,7 @@ check_live_hosts() {
 	
 	#If attack range is into the selected network interface
 	if [[ $network_start -ge $supernet_start && $network_end -le $supernet_end ]]; then
-		$proxychains arp-scan -I $INTERFACE -g $rangeIP -q | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v $MY_IP > $DIR/tmp_hosts.txt 2>&1
+		nmap -PR -sn $rangeIP | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v $MY_IP > $DIR/tmp_hosts.txt 2>&1
 		#S'assurer que les excluded hosts ne sont pas inclu dans hosts.txt
 		cat $DIR/tmp_hosts.txt | grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' > $DIR/hosts.txt
 		rm $DIR/tmp_hosts.txt

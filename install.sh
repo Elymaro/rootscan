@@ -49,6 +49,12 @@ if ! which kerbrute >/dev/null 2>&1; then
    rm -rf kerbrute
 fi
 
+if [ ! -f "/usr/share/nmap/nmap-services.bkp" ]; then
+   cp /usr/share/nmap/nmap-services /usr/share/nmap/nmap-services.bkp
+fi
+# Make update top-ports 1000 to include winrm service
+curl https://raw.githubusercontent.com/nmap/nmap/refs/heads/master/nmap-services -o /usr/share/nmap/nmap-services
+
 if ! which proxychains >/dev/null 2>&1; then
    apt install proxychains4 -y
 fi

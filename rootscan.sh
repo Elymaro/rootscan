@@ -40,6 +40,7 @@ starter() {
 	
 	# Paths
 	DIR=$ProjectName
+	date_log=$(date +"%Y_%m_%d_%Hh_%Mm")
 	logfile=$DIR/log_${Username}_${date_log}.log
 	net=$(python3 -c "print('$rangeIP'.split('/')[0])")
 	DIR_PORTS="$DIR/ports"
@@ -48,7 +49,6 @@ starter() {
 
 	# TimeReference
 	start=$SECONDS
-	date_log=$(date +"%Y_%m_%d_%Hh_%Mm")
 	
 	if [ ! -d "$DIR" ];then
 		mkdir $DIR

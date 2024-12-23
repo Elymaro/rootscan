@@ -153,6 +153,9 @@ control_ip_attack() {
 	TARGET_IP="${ip}"
 	rangeIP_array=$(echo "$rangeIP" | tr ',' '\n')
 	while IFS= read -r rangeIP_array_key; do
+		if [[ "$rangeIP_array_key" =~ /32$ && "$TARGET_IP" == "${rangeIP_array_key%/32}" ]]; then
+			return 0
+		fi
 		NETWORK_LAN=$(ipcalc -n -b $rangeIP_array_key | grep "Address:" | awk '{print $2}')
 		NETWORK_LAN_BROADCAST=$(ipcalc -n -b $rangeIP_array_key | grep "Broadcast:" | awk '{print $2}')
 		# Fonction pour convertir les adresses IP en entiers
@@ -244,6 +247,7 @@ nmap_fast () {
 		#ports=$(nmap -p- --min-rate=1000 -T4 $target | grep ^[0-9] | cut -d '/' -f 1 | tr '\n' ',' | sed s/,$//); echo "nmap -p $ports -sT -sV -T4 -R $target"; nmap -p $ports -sT -sV -T4 -R $target
 		NMAP_HOSTS="-iL $DIR/hosts.txt"
 		nmap $NMAP_HOSTS -sS -T4 -oA $DIR/scan_nmap/scan_TCP_ports --open --exclude $excluded_hosts >/dev/null 2>&1
+		
 		ports=$(grep -oP '^\d{1,5}/(tcp|udp)' $DIR/scan_nmap/scan_TCP_ports.nmap | awk -F'/' '{print $1}' | sort -u | paste -sd, -)
 		nmap $NMAP_HOSTS -sS -sV -T4 -p $ports -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1
 		#log "${SPACE}[!] Nmap TCP report : ${DIR}/scan_nmap/scan_Fast_TCP.nmap"
@@ -535,34 +539,46 @@ vulns () {
 			if control_ip_attack; then
 				host=${ip}
 				hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
-				$proxychains timeout $CME_TIMEOUT netexec smb $host -u $Username $cme_creds -M $module $option_vulns < /dev/null > $DIR_VULNS/Vulns_Device_${ip}_$module.txt 2>/dev/null
+				#echo "$proxychains timeout $CME_TIMEOUT netexec smb $host -u $Username $cme_creds -M $module $option_vulns < /dev/null > $DIR_VULNS/Vulns_Device_${ip}_$module.txt 2>/dev/null"
+				$proxychains timeout 30 netexec smb $host -u $Username $cme_creds -M $module $option_vulns < /dev/null > $DIR_VULNS/Vulns_Device_${ip}_$module.txt 2>/dev/null
 				#grep -L "Exception while" ${DIR_VULNS}/* | xargs cat | grep -Ev 'SMBv|STATUS_ACCESS_DENIED|Unable to detect|does NOT appear|sodebo\.fr\\:|Error while|STATUS_LOGON_FAILURE'
 				if grep -Eqo "STATUS_NOT_SUPPORTED|Failed to authenticate the user .* with ntlm" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
 					if [[ -z $hostname ]];then
 						kerberos="-d $(echo "$hostname" | cut -d '.' -f 2-) --kerberos"
 						host="$hostname"
 					fi
-					$proxychains timeout $CME_TIMEOUT netexec smb $host -u $Username $cme_creds $kerberos -M $module $option_vulns < /dev/null > $DIR_VULNS/Vulns_Device_${ip}_$module.txt 2>/dev/null
+					$proxychains timeout 30 netexec smb $host -u $Username $cme_creds $kerberos -M $module $option_vulns < /dev/null > $DIR_VULNS/Vulns_Device_${ip}_$module.txt 2>/dev/null
 				fi
+				if [[ ! -f "$DIR_VULNS/Vulns_Device_${ip}_$module.txt" ]]; then
+      				continue
+    			fi
+
 				if [[ "$module" == "ms17-010" || "$module" == "zerologon" || "$module" == "petitpotam" || "$module" == "nopac" ]] && ! grep -Eqio "Unable to detect|does NOT appear vulnerable" $DIR_VULNS/Vulns_Device_${ip}_$module.txt && grep -Eqio "vulnerable" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					# MS17-10 / ZEROLOGON / PETITPOTAM
 					green_log "${SPACE}${SPACE}[💀] Vulnerabilty '$module' found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
 					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
 				elif [[ "$module" == "gpp_password" || "$module" == "gpp_password" ]] && grep -Eqio "Found credentials" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					# GPP_PASSWORD
 					green_log "${SPACE}${SPACE}[💀] Vulnerabilty '$module' found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
 					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
 				elif [[ "$module" == "webdav" || "$module" == "spooler" ]] && grep -Eqio "$module" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					# WEBDAV / SPOOLER
 					green_log "${SPACE}${SPACE}[💀] $module found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
 					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
 				elif [[ "$module" == "install_elevated" ]] && grep -Eqio "Enabled" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					# INSTALL_ELEVATED
 					green_log "${SPACE}${SPACE}[💀] install_elevated vulnérability found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
 					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
 				elif [[ "$module" == "enum_av" ]] && grep -Eqio "enum_av" $DIR_VULNS/Vulns_Device_${ip}_$module.txt && ! grep -Eqio "Found NOTHING" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					# ENUM_AV
 					green_log "${SPACE}${SPACE}[💀] AV identified on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
 					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
 				elif [[ "$module" == "enumdns" ]] && grep -Eqio "record" $DIR_VULNS/Vulns_Device_${ip}_$module.txt;then
+					# ENUMDNS
 					green_log "${SPACE}${SPACE}[💀] DNS exfiltration done on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
 					echo $ip >> "$DIR_VULNS/Vulns_Devices_$module.txt"
 				elif echo "$module" | grep -q "coerce_plus" &&  grep -Eqio "vulnerable" $DIR_VULNS/Vulns_Device_${ip}_$module.txt ;then
+					# COERCE_PLUS
 					coerce_vulns=$(cat $DIR_VULNS/Vulns_Device_anonymous_${ip}_$module.txt | grep -i "COERCE_PLUS" | awk -F ", " '{print $2}')
 					for coerce_vulns_key in $coerce_vulns; do
 						green_log "${SPACE}${SPACE}[💀] Vulnerabilty '$coerce_vulns_key' found on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
@@ -577,9 +593,6 @@ vulns () {
 				fi
 			fi
 		done
-		if [ -n "$DIR_VULNS/Vulns_Devices_$module.txt" ]; then
-			green_log "${SPACE}${SPACE}[💀] MSOL credentials could be find on $ip ($hostname) ! -> $DIR_VULNS/Vulns_Device_${ip}_$module.txt"
-		fi
 	done
 	sort -u "$DIR_VULNS/Vulns_Devices_$module.txt" -o "$DIR_VULNS/Vulns_Devices_$module.txt"
 }

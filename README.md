@@ -66,18 +66,20 @@ The script will also attempt to recover the most popular exploits/misconfigurati
 
 ### Options
 ```
-Usage: ./rootscan.sh -o ProjectName -i Interface -t rangeIP [-u Username [-p Password | -n HashNTLM]] -f
+Usage: ./rootscan.sh -o ProjectName -i Interface -t rangeIP [-u Username [-p Password | -n NT_Hash]] [-f | -e nmap_fast | -s smb,vnc] [-m [basic | no-ping]]
 
 Options:
   -o  Project name (output directory)
   -i  Network interface
-  -t  IP range (e.g., 192.168.1.17/32 or 192.168.1.128/27)
+  -t  IP range (e.g., 192.168.0.0/24,192.168.1.128/27). /32 must be used for individual IP addresses.
   -u  Username (optional)
-  -p  Password (optional, either Password or HashNTLM must be provided, can be empty)
-  -H  NTLM Hash (optional, either Password or HashNTLM must be provided, can be empty)
+  -p  Password (optional, either Password or NT_Hash must be provided, can be empty)
+  -H  NTLM Hash (optional, either Password or NT_Hash must be provided, can be empty)
   -f  Execute all functions
   -e  Execute all functions, but exclude specific functions (-e rdp,winrm)
   -s  Select specific functions (-s rdp,winrm)
+  -m  Discovery mode : basic=ARP+ping(faster)(Default mode) ; no-ping=no ping requests on machines(slower but more accurate)
+  -M  Modifications or alerts on target systems (e.g., LSA, SAM, NTDS extraction, RDP enabling, Kerberoasting) will not be performed
   -r  Restore modifications
   -h  Display help
 
@@ -100,12 +102,11 @@ Available functions:
   - ipmi         : IPMI enumeration
   - mssql        : MSSQL authentication
   - smb          : anonymous auth., guest auth., shares, users, lsa, dpapi, rdp session ..
-  - prn          : Printers scan
   - asp          : Try ASRepRoasting Attack
   - users        : Get-ADUsers
   - krb          : Try Kerberoasting Attack
   - web          : Try to identify web services
-  - nmap_full    : Deep nmap scan
+  - nmap_full    : Deep Nmap
 ```
 
 ### Exemple HTML report

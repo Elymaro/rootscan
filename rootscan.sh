@@ -190,7 +190,7 @@ nmap_fast () {
 	log "[!] Discovery mode : '$discovery_mode'"
 	
 	#If the discovery must be by ping requests :
-	if [[ $discovery_mode == "arp-ping" ]]; then ### A DEFINIR
+	if [[ $discovery_mode == "arp-ping" ]] && [ -z "$proxychains" ]; then
 		rangeIP_array=$(echo "$rangeIP" | tr ',' '\n')
 		for rangeIP_array_key in $rangeIP_array; do
 			echo "Starting scan : $rangeIP_array_key"
@@ -225,7 +225,7 @@ nmap_fast () {
 		done
 		NMAP_HOSTS="-Pn -iL $DIR/hosts.txt"
 		log "${SPACE}[!] $(wc -l $DIR/hosts.txt) hosts detected via arp / ping"
-	else
+	elif [ -z "$proxychains" ]; then
 		NMAP_HOSTS=$(echo "$rangeIP" | tr ',' ' ')
 	fi
 	

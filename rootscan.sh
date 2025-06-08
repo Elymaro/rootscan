@@ -49,10 +49,8 @@ starter() {
 
 	# TimeReference
 	start=$SECONDS
-	
-	if [ ! -d "$DIR" ];then
-		mkdir $DIR
-	fi
+
+ 	mkdir $DIR 2>/dev/null
 	excluded_hosts="$(ip -o -4 addr show $INTERFACE | awk '{print $4}' | cut -d'/' -f1)"
 	RDP_TIMEOUT=7
 	CME_TIMEOUT=15 #increase in case of slow network
@@ -77,18 +75,10 @@ EOF
 	RESET="\033[0;00m"
 
 	## Creation des dossiers 
-	if [ ! -e $DIR ];then
-		mkdir $DIR
-	fi
-	if [ ! -e $DIR/scan_nmap ];then
-		mkdir $DIR/scan_nmap
-	fi
-	if [ ! -e $DIR/ports ];then
-		mkdir $DIR/ports
-	fi
-	if [ ! -e $DIR/vulns ];then
-		mkdir $DIR/vulns
-	fi
+ 	mkdir $DIR/scan_nmap 2>/dev/null
+  	mkdir $DIR/scan_nmap 2>/dev/null
+  	mkdir $DIR/ports 2>/dev/null
+   	mkdir $DIR/vulns 2>/dev/null
 
 	if [ -e $DIR/log_$Username.log ];then
 		rm $DIR/log_$Username.log
@@ -426,10 +416,10 @@ nmap_fast () {
 ########################## SMB NTLM RELAY ##################################
 relay () {
 	log "[🔍] Getting hosts with Relayable SMB"
-	mkdir $DIR_VULNS/NTLM_relay
-	$proxychains netexec --timeout $CME_TIMEOUT smb ${DIR}/hosts.txt --gen-relay-list $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt < /dev/null > /dev/null 2>&1
-	sort -u $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt -o $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt
+	mkdir $DIR_VULNS/NTLM_relay 2>/dev/null
+	$proxychains netexec smb ${DIR}/hosts.txt --gen-relay-list $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt < /dev/null > /dev/null 2>&1
 	if [ -f "$DIR_VULNS/NTLM_relay/ntlm-relay-list.txt" ];then
+ 		sort -u $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt -o $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt
 		nb_relay_vulnerable=$(cat $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt | wc -l)
 		green_log "${SPACE}[💀] Found $nb_relay_vulnerable devices vulnerable to NTLM relay in the $rangeIP network -> $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt"
 		#If prochains isn't enabled then try to catch something with responder and ntlmrelay
@@ -462,11 +452,11 @@ relay () {
 			fi
 			green_log "${SPACE}[💀] NTLM Relay started, look at socks and folder $DIR_VULNS/NTLM_relay/ for user's netNTLM hashes"
 		else
+  			green_log "${SPACE}[💀] Found $nb_relay_vulnerable devices vulnerable to NTLM relay in the $rangeIP network -> $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt"
 			blue_log "${SPACE} [!] Impossible to launch NTLM Relay via proxychains"
 		fi
 		
 	else
-		rm $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt
 		#red_log "${SPACE}[X] No NTLM relay possible for this range $rangeIP"
 	fi
 }
@@ -841,9 +831,7 @@ zt () {
 	domain=$(head -n 1 $DIR/hostname_file.txt | awk -F ":" '{print $2}' | cut -d '.' -f 2-)
 	NS=$($proxychains host -T -t ns $domain | awk -F"name server" '{print$2}')
 	NS_cleaned=$(echo "$NS" | while read -r line; do echo "${line:0: -1}"; done)
-	if [ ! -d $DNSPATH ];then
-		mkdir $DNSPATH
-	fi
+	mkdir $DNSPATH 2>/dev/null
 	for name_server in $NS_cleaned;
 	do
 		$proxychains host -T -t axfr $domain $name_server > $DNSPATH/$name_server.txt 2>/dev/null
@@ -942,7 +930,7 @@ snmp () {
 ldap () {
 	### ANONYMOUS LDAP ###
 	if [[ -e "${DIR_PORTS}/389.txt" ]]; then
-		mkdir ${DIR_VULNS}/ldap
+		mkdir ${DIR_VULNS}/ldap 2>/dev/null
 		log "[🔍] Checking anonymous LDAP"
 		#Extract the IPs of machines with port 389 open
 		ip_389=$(cat "${DIR_PORTS}/389.txt" 2>/dev/null)
@@ -1045,7 +1033,7 @@ ipmi () {
 
 mssql () {
 	if [[ -e "${DIR_PORTS}/1433.txt" ]] && [[ "$Username" != "anonymous" ]]; then
-	mkdir ${DIR_VULNS}/mssql
+		mkdir ${DIR_VULNS}/mssql 2>/dev/null
 		log "[🔍] Checking MSSQL"
 		MSSQL=$(cat ${DIR_PORTS}/1433.txt)
 		for ip in $MSSQL; do
@@ -1086,7 +1074,7 @@ mssql () {
 ########################### SCAN SMB ###############################
 smb () {
 	if [[ -e "${DIR_PORTS}/445.txt" ]]; then
-		mkdir ${DIR_VULNS}/smb
+		mkdir ${DIR_VULNS}/smb 2>/dev/null
 		log "[🔍] Check SMB"
 		SMB=$(cat ${DIR_PORTS}/445.txt)
 		for ip in $SMB;	do
@@ -1431,7 +1419,7 @@ asp (){
 		hostname=$(grep -E "^$DC_ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
 		DC_host="$hostname"
 		domain=$(echo "$hostname" | cut -d '.' -f 2-)
-		mkdir $DIR_VULNS/krb
+		mkdir $DIR_VULNS/krb  2>/dev/null
 		log "[🔍] Starting asreproasting attack ..."
 		if [[ "$Username" != "anonymous" ]]; then
 			if [ -n "$NT_Hash" ]; then
@@ -1464,7 +1452,7 @@ krb () {
 		#DC_host="$(echo $hostname | cut -d '.' -f 1)"
 		DC_host="$hostname"
 		domain=$(echo "$hostname" | cut -d '.' -f 2-)
-		mkdir $DIR_VULNS/krb
+		mkdir $DIR_VULNS/krb  2>/dev/null
 		log "[🔍] Checking SPN users (kerberoast) ..."
 		if [[ "$Username" != "anonymous" ]]; then
 			if [ -n "$NT_Hash" ]; then

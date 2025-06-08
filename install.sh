@@ -22,8 +22,8 @@ fi
 
 if ! which manspider >/dev/null 2>&1; then
    apt install python3-venv -y
-   pip install pipx -y
-   pipx install git+https://github.com/blacklanternsecurity/MANSPIDER
+   pip install pipx
+   pipx install git+https://github.com/blacklanternsecurity/MANSPIDER --force
    pipx ensurepath
    # for images (png, jpeg)
    apt install tesseract-ocr -y

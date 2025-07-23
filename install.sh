@@ -12,6 +12,10 @@ if ! which netexec >/dev/null 2>&1; then
    pipx install git+https://github.com/Pennyw0rth/NetExec
 fi
 
+if ! which xfreerdp3 >/dev/null 2>&1; then
+   apt install freerdp3 -y
+fi
+
 if ! which pret >/dev/null 2>&1; then
    git clone https://github.com/RUB-NDS/PRET.git
    cd PRET; chmod +x pret.py

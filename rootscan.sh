@@ -751,9 +751,9 @@ rdp () {
 						green_log "$successed_rdp"
 						if [ "$rdp_mode" = "NTLM" ]; then
 							if [ -n "$NT_Hash" ]; then
-								blue_log "${SPACE}${SPACE} [+] $proxychains xfreerdp /cert-tofu /v:${ip} /u:${Username} /pth:${NT_Hash} /sec:nla +clipboard"
+								blue_log "${SPACE}${SPACE} [+] $proxychains xfreerdp3 /cert-tofu /v:${ip} /u:${Username} /pth:${NT_Hash} /sec:nla +clipboard"
 							else
-								blue_log "${SPACE}${SPACE} [+] $proxychains xfreerdp /cert-tofu /v:${ip} /u:${Username} /p:${Password} /sec:nla +clipboard"
+								blue_log "${SPACE}${SPACE} [+] $proxychains xfreerdp3 /cert-tofu /v:${ip} /u:${Username} /p:${Password} /sec:nla +clipboard"
 							fi
 						fi
 					fi

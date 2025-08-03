@@ -76,37 +76,38 @@ Options:
   -p  Password (optional, either Password or NT_Hash must be provided, can be empty)
   -H  NTLM Hash (optional, either Password or NT_Hash must be provided, can be empty)
   -f  Execute all functions
-  -e  Execute all functions, but exclude specific functions (-e rdp,winrm)
-  -s  Select specific functions (-s rdp,winrm)
-  -m  Discovery mode : basic=ARP+ping(faster)(Default mode) ; no-ping=no ping requests on machines(slower but more accurate)
-  -M  Modifications or alerts on target systems (e.g., LSA, SAM, NTDS extraction, RDP enabling, Kerberoasting) will not be performed
-  -r  Restore modifications
+  -e  Execute all functions except specified ones (-e rdp,winrm)
+  -s  Execute only specified functions (-s rdp,winrm)
+  -m  Discovery mode (default: basic). basic = ARP + ping (faster, may miss hosts); no-ping = skip ping (slower, more accurate)
+  -M  Modifications or alerts on target systems may be performed (e.g., SAM / LSA / LSASS / DPAPI / NTDS extraction, RDP enabling)
+  -r  Restore modifications made to targets
   -h  Display help
 
 Available functions:
-  - nmap_fast    : Ports scan, Service versions scan (need to be done at least 1 time at the begin of a project)
-  - relay        : Responder + NTLMRelayx
-  - manspider    : Search sensitive elements (password, username, .. etc) on SMB Shares
-  - vulns        : ms17-010, nopac, zerologon, MSOL creds, GPP_autologin, GPP_password, ...
-  - ftp          : FTP enumeration
-  - ssh          : SSH enumeration
-  - winrm        : WinRM enumeration
-  - rdp          : RDP enumeration
-  - smtp         : SMTP enumeration
-  - nfs          : NFS enumeration
-  - vnc          : VNC enumeration
-  - zt           : Zone Transfer DNS
-  - printers     : Looking for printers
-  - snmp         : Looking for SNMP public communities
-  - ldap         : Anonymous LDAP
-  - ipmi         : IPMI enumeration
-  - mssql        : MSSQL authentication
-  - smb          : anonymous auth., guest auth., shares, users, lsa, dpapi, rdp session ..
-  - asp          : Try ASRepRoasting Attack
-  - users        : Get-ADUsers
-  - krb          : Try Kerberoasting Attack
-  - web          : Try to identify web services
-  - nmap_full    : Deep Nmap
+  - nmap_fast    : Scan open ports and service versions (need to be done at least 1 time at the begin of a project)
+  - relay        : Launch Responder and NTLMRelayx
+  - manspider    : Search for sensitive data (passwords, usernames...) on SMB shares
+  - vulns        : Check for ms17-010, NoPac, Zerologon, MSOL creds, GPP_autologin, GPP_password, ...
+  - ftp          : Enumerate FTP services
+  - ssh          : Enumerate SSH services
+  - winrm        : Enumerate WinRM services
+  - rdp          : Enumerate WinRM services
+  - smtp         : Enumerate SMTP services
+  - nfs          : Enumerate NFS shares
+  - vnc          : Enumerate VNC services
+  - zt           : Attempt DNS zone transfers
+  - printers     : Identify reachable printers
+  - snmp         : Search for public SNMP communities
+  - ldap         : Anonymous LDAP enumeration
+  - ipmi         : IPMI service enumeration
+  - mssql        : Attempt MSSQL authentication
+  - smb          : Check anonymous/guest access, shares, users, LSA, DPAPI, ...
+  - bloodhound   : Collect data for BloodHound Community Edition (equivalent to SharpHound/Ingestor)
+  - users        : Enumerate Active Directory users (Get-ADUsers)
+  - asp          : Attempt AS-REP Roasting attack
+  - krb          : Attempt Kerberoasting attack
+  - web          : Identify web services
+  - nmap_full    : Deep Nmap scan
 ```
 
 ### Exemple HTML report

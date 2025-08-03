@@ -16,6 +16,10 @@ if ! which xfreerdp3 >/dev/null 2>&1; then
    apt install freerdp3 -y
 fi
 
+if ! which bloodhound-ce-python >/dev/null 2>&1; then
+   apt install bloodhound-ce-python -y
+fi
+
 if ! which pret >/dev/null 2>&1; then
    git clone https://github.com/RUB-NDS/PRET.git
    cd PRET; chmod +x pret.py

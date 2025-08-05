@@ -890,13 +890,13 @@ printers () {
 
 		#If attack range is into the selected network interface
 		if [[ $network_start -le $target_start && $network_end -ge $target_end ]]; then
-			if which pret.py > /dev/null 2>&1; then
-				python2 pret.py >> ${ROOT_PATH}/PrinterScan.txt 2>>/dev/null
+			if which pret > /dev/null 2>&1; then
+				pret >> ${ROOT_PATH}/PrinterScan.txt 2>>/dev/null
 				if grep -qi "Device" ${ROOT_PATH}/PrinterScan.txt ;then
 					green_log "${SPACE}[!] Printers found ! Please combine these findings with the nmap web interface scan for printers -> ${ROOT_PATH}/PrinterScan.txt"
 				fi
 			else
-				log "${SPACE}[!] Impossible to find pret.py"
+				log "${SPACE}[!] Impossible to find the 'pret' tool."
 			fi
 		fi
 	done

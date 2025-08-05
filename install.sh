@@ -26,6 +26,10 @@ if ! which pret >/dev/null 2>&1; then
    mv /usr/bin/PRET /opt/pret
    ln -s /opt/pret/pret.py /usr/local/bin/pret
    chmod +x /usr/local/bin/pret
+   curl https://bootstrap.pypa.io/pip/2.7/get-pip.py -o get-pip.py
+   python2 get-pip.py
+   rm get-pip.py
+   python2 -m pip install pysnmp
 fi
 
 if ! which manspider >/dev/null 2>&1; then

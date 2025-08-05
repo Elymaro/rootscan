@@ -22,10 +22,10 @@ fi
 
 if ! which pret >/dev/null 2>&1; then
    git clone https://github.com/RUB-NDS/PRET.git
-   cd PRET; chmod +x pret.py
-   python2 -m pip install colorama pysnmP
-   mv pret.py /usr/bin/pret
-   pip install Discovery
+   sed -i '1s|^#!/usr/bin/env python$|#!/usr/bin/env python2|' PRET/pret.py
+   mv /usr/bin/PRET /opt/pret
+   ln -s /opt/pret/pret.py /usr/local/bin/pret
+   chmod +x /usr/local/bin/pret
 fi
 
 if ! which manspider >/dev/null 2>&1; then
